@@ -24,8 +24,6 @@ const HASH_HEX_SIZE: usize = HASH_SIZE * 2; // 128 hex characters
 struct Config {
     max_file_size: u64,
     max_files: usize,
-    ignore_path_security: bool,
-    base_dir: PathBuf,
 }
 
 impl Default for Config {
@@ -33,8 +31,6 @@ impl Default for Config {
         Self {
             max_file_size: DEFAULT_MAX_FILE_SIZE,
             max_files: DEFAULT_MAX_FILES,
-            ignore_path_security: false,
-            base_dir: std::env::current_dir().expect("Failed to get current directory"),
         }
     }
 }
@@ -87,70 +83,27 @@ fn parse_size(size_str: &str) -> io::Result<u64> {
     Ok(size as u64)
 }
 
-/// Securely validate and canonicalize paths to prevent path traversal
+/// Canonicalize paths without security restrictions
 fn safe_canonicalize<P: AsRef<Path>>(
     path: P,
-    config: &Config,
-    is_checksum_file: bool,
 ) -> io::Result<PathBuf> {
     let path = path.as_ref();
-    let base_dir = &config.base_dir;
 
     // Skip validation for standard input
     if path == Path::new("-") {
         return Ok(PathBuf::from("-"));
     }
 
-    // For checksum files in check mode, don't apply path security restrictions
-    if is_checksum_file && config.ignore_path_security {
-        return canonicalize(path).map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!("Failed to access checksum file '{}': {}", path.display(), e),
-            )
-        });
-    }
-
     // Canonicalize the path (resolves symlinks and normalizes)
-    let canonical_path = canonicalize(path).map_err(|e| {
+    canonicalize(path).map_err(|e| {
         io::Error::new(
             e.kind(),
             format!("Failed to access '{}': {}", path.display(), e),
         )
-    })?;
-
-    // Skip security checks if explicitly disabled
-    if config.ignore_path_security {
-        return Ok(canonical_path);
-    }
-
-    // Ensure path is within base directory
-    let base_canonical = canonicalize(base_dir).map_err(|e| {
-        io::Error::new(
-            e.kind(),
-            format!(
-                "Failed to canonicalize base directory '{}': {}",
-                base_dir.display(),
-                e
-            ),
-        )
-    })?;
-
-    if !canonical_path.starts_with(&base_canonical) {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!(
-                "Path traversal attempt blocked: '{}' is not under base directory '{}'",
-                path.display(),
-                base_dir.display()
-            ),
-        ));
-    }
-
-    Ok(canonical_path)
+    })
 }
 
-/// Secure file opening with size and path validation
+/// Secure file opening with size validation
 fn secure_open_file<P: AsRef<Path>>(
     path: P,
     config: &Config,
@@ -250,7 +203,7 @@ fn process_file(
     }
 
     let path = Path::new(filename);
-    let canonical_path = safe_canonicalize(path, config, false)?;
+    let canonical_path = safe_canonicalize(path)?;
     
     let metadata = canonical_path.metadata().map_err(|e| {
         io::Error::new(
@@ -268,7 +221,7 @@ fn process_file(
     
     let mut reader = BufReader::new(file);
     let hash = compute_whirlpool(&mut reader)?;
-    println!("{}  {}", hash_to_hex(&hash), filename);
+    println!("{}  {}", hash_to_hex(&hash), canonical_path.display());
     Ok(())
 }
 
@@ -280,18 +233,13 @@ fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
         return Err(ParseError::EmptyOrComment);
     }
 
-    if line.len() < HASH_HEX_SIZE + 2 {
+    if line.len() < HASH_HEX_SIZE + 1 { // At least one space after hash
         return Err(ParseError::TooShort(line.len()));
     }
 
     let (hash_part, rest) = line.split_at(HASH_HEX_SIZE);
-    let separator = &rest[..2];
-    let filename = rest[2..].trim_start();
-
-    if separator != "  " && separator != " *" {
-        return Err(ParseError::InvalidSeparator(separator.to_string()));
-    }
-
+    
+    // First validate the hash part before checking separator
     if hash_part.len() != HASH_HEX_SIZE {
         return Err(ParseError::InvalidHashLength(hash_part.len()));
     }
@@ -303,6 +251,22 @@ fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
             hash_part.find(non_hex).unwrap_or(0)
         )));
     }
+
+    // Now check separator and filename
+    if rest.is_empty() {
+        return Err(ParseError::TooShort(line.len()));
+    }
+
+    // Allow single space, double space, or space+asterisk as separators
+    let (_separator, filename) = if rest.starts_with("  ") { // Two spaces
+        ("  ", &rest[2..].trim_start())
+    } else if rest.starts_with(" *") { // Space + asterisk
+        (" *", &rest[2..].trim_start())
+    } else if rest.starts_with(' ') { // Single space
+        (" ", &rest[1..].trim_start())
+    } else {
+        return Err(ParseError::InvalidSeparator(rest.chars().take(2).collect()));
+    };
 
     if filename.is_empty() {
         return Err(ParseError::TooShort(line.len()));
@@ -316,13 +280,14 @@ fn check_checksums(
     config: &Config,
     status_only: bool,
     warn: bool,
+    quiet: bool,
 ) -> io::Result<i32> {
     let file_counter = AtomicUsize::new(0);
     let checksum_path = Path::new(checksum_source);
     let reader: Box<dyn BufRead> = if checksum_source == "-" {
         Box::new(BufReader::new(io::stdin()))
     } else {
-        let canonical_checksum_path = safe_canonicalize(checksum_path, config, true)?;
+        let canonical_checksum_path = safe_canonicalize(checksum_path)?;
         let checksum_file = secure_open_file(
             &canonical_checksum_path,
             config,
@@ -358,7 +323,7 @@ fn check_checksums(
                 
                 // Validate and open target file securely
                 let target_path = Path::new(filename);
-                let canonical_target = safe_canonicalize(target_path, config, false)?;
+                let canonical_target = safe_canonicalize(target_path)?;
                 
                 let result = File::open(&canonical_target)
                     .and_then(|file| {
@@ -381,7 +346,7 @@ fn check_checksums(
                 match result {
                     Ok(actual_hash) => {
                         if actual_hash.to_lowercase() == expected_hash.to_lowercase() {
-                            if !status_only {
+                            if !status_only && !quiet {
                                 println!("{}: OK", filename);
                             }
                         } else {
@@ -427,14 +392,14 @@ fn check_checksums(
                         ParseError::TooShort(len) => {
                             eprintln!(
                                 "whirlpoolsum: {}: line {}: line too short ({} characters). \
-                                 Expected format: <128-character hash> <space><space|*> <filename>",
+                                 Expected format: <128-character hash> <space(s)> <filename>",
                                 source_name, line_num, len
                             );
                         }
                         ParseError::InvalidSeparator(sep) => {
                             eprintln!(
                                 "whirlpoolsum: {}: line {}: invalid separator '{:#?}'. \
-                                 Expected two spaces '  ' or space+asterisk ' *'",
+                                 Expected one or two spaces, or space+asterisk",
                                 source_name, line_num, sep
                             );
                         }
@@ -488,40 +453,33 @@ Print or check WHIRLPOOL (512-bit) checksums.
 
 With no FILE, or when FILE is -, read standard input.
 
-Security Options:
-      --ignore-path-security   disable path traversal protection (DANGEROUS)
+Options:
+  -c, --check       read WHIRLPOOL sums from FILEs and check them
+      --status      don't output anything, status code shows success
+      --warn        warn about improperly formatted checksum lines
+  -q, --quiet       don't print OK for each successfully verified file
       --max-file-size SIZE     set maximum file size (default: 1G)
       --max-files COUNT        set maximum number of files (default: 100)
-
-Check Mode Options:
-  -c, --check                 read WHIRLPOOL sums from FILEs and check them
-      --status                don't output anything, status code shows success
-      --warn                  warn about improperly formatted checksum lines
-  -q, --quiet                 don't print OK for each successfully verified file
-
-Other Options:
-  -h, --help                  display this help and exit
+  -h, --help        display this help and exit
 
 SIZE format examples: 512M, 1G, 2.5GB
+
+Format of checksum file lines:
+  <128 hex characters><space(s)><filename>
+  Example: b867ae736a...  filename.txt
+  Accepts one space, two spaces, or space+asterisk as separator
 
 Exit status:
   0 = all checksums matched (or successfully generated)
   1 = some checksums failed or files not found
-  2 = invalid command line arguments or security violations
+  2 = invalid command line arguments
   3 = resource limits exceeded
-
-WHIRLPOOL-512 security note: This algorithm is considered secure for integrity verification
-but is not recommended for password hashing or digital signatures.
 
 Current configuration:
   Maximum file size: {}
-  Maximum files: {}
-  Base directory: {}
-  Path security: {}\n",
+  Maximum files: {}\n",
             DEFAULT_MAX_FILE_SIZE,
-            DEFAULT_MAX_FILES,
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("<unknown>")).display(),
-            if Config::default().ignore_path_security { "DISABLED" } else { "ENABLED" }
+            DEFAULT_MAX_FILES
         )
         .as_bytes(),
     )
@@ -534,7 +492,7 @@ fn main() -> io::Result<()> {
     let mut check_mode = false;
     let mut status_only = false;
     let mut warn = false;
-    let mut _quiet = false;
+    let mut quiet = false;
     let mut files = Vec::new();
 
     // Parse command line arguments
@@ -543,13 +501,7 @@ fn main() -> io::Result<()> {
             "-c" | "--check" => check_mode = true,
             "--status" => status_only = true,
             "--warn" => warn = true,
-            "-q" | "--quiet" => _quiet = true,
-            "--ignore-path-security" => {
-                config.ignore_path_security = true;
-                eprintln!(
-                    "WARNING: Path traversal protection is disabled. Only use with trusted input!"
-                );
-            }
+            "-q" | "--quiet" => quiet = true,
             "--max-file-size" => {
                 if let Some(size_arg) = args.next() {
                     config.max_file_size = parse_size(&size_arg)?;
@@ -601,17 +553,17 @@ fn main() -> io::Result<()> {
     let file_counter = AtomicUsize::new(0);
     let exit_code = if check_mode {
         if files.is_empty() {
-            if !status_only {
+            if !status_only && !quiet {
                 println!("Verifying checksums from standard input...");
             }
             // Read checksums from stdin
-            check_checksums("-", &config, status_only, warn)?
+            check_checksums("-", &config, status_only, warn, quiet)?
         } else if files.len() == 1 {
-            if !status_only {
+            if !status_only && !quiet {
                 println!("Verifying checksums from file: {}", files[0]);
             }    
         // Read checksums from specified file
-            check_checksums(&files[0], &config, status_only, warn)?
+            check_checksums(&files[0], &config, status_only, warn, quiet)?
         } else {
             eprintln!("whirlpoolsum: only one checksum file allowed in check mode");
             process::exit(2);
