@@ -1,6 +1,6 @@
 [package]
 name = "whirlpoolsum"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Rust version of a whirlpoolsum that prints and checks WHIRLPOOL 512-bit checksums."
 authors = ["Qwen3-Max"]
