@@ -2,7 +2,7 @@
 name = "whirlpoolsum"
 version = "0.4.0"
 edition = "2021"
-description = "Rust version of a whirlpoolsum that prints and checks WHIRLPOOL 512-bit checksums."
+description = "Rust version of the whirlpoolsum that prints and checks WHIRLPOOL 512-bit checksums."
 authors = ["Qwen3-Max"]
 license = "CC0-1.0"
 repository = "https://github.com/c0m4r/rust-whirlpoolsum"
