@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use whirlpool::{Digest, Whirlpool};
+use colored::Colorize;
 
 /// Detailed errors for checksum line parsing
 #[derive(Debug)]
@@ -443,12 +444,18 @@ fn check_checksums(
 }
 
 fn print_help() {
+    let version = env!("CARGO_PKG_VERSION");
+    let license = env!("CARGO_PKG_LICENSE");
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
     
     stdout.write_all(
         format!(
-            "Usage: whirlpoolsum [OPTION]... [FILE]...
+            "whirlpoolsum v{} by Qwen3-Max & c0m4r
+https://github.com/c0m4r/rust-whirlpoolsum/
+LICENSE: {}
+
+Usage: whirlpoolsum [OPTION]... [FILE]...
 Print or check WHIRLPOOL (512-bit) checksums.
 
 With no FILE, or when FILE is -, read standard input.
@@ -478,6 +485,8 @@ Exit status:
 Current configuration:
   Maximum file size: {}
   Maximum files: {}\n",
+            version.green(),
+            license,
             DEFAULT_MAX_FILE_SIZE,
             DEFAULT_MAX_FILES
         )

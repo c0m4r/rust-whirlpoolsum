@@ -20,3 +20,25 @@ whirlpoolsum --help
 ```
 
 On Alpine install [gcompat](https://git.adelielinux.org/adelie/gcompat) with `apk add gcompat`
+
+## Usage
+
+### text checksum
+
+`echo -n "All your base are belong to us" | whirlpoolsum`
+
+### file checksum
+
+`whirlpoolsum example.txt`
+
+### verify file checksum (stdin)
+
+`echo -n "abcdef12345(...)  example.txt" | whirlpoolsum -c`
+
+## verify file checksum (checksum file)
+
+`whirlpoolsum -c example.txt.wrl`
+
+## License
+
+Public Domain / CC0 1.0 Universal
