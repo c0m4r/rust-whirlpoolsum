@@ -1,5 +1,8 @@
 #!/bin/bash
 
+BASEDIR=$(dirname "$0")
+CMD="$BASEDIR/../target/debug/whirlpoolsum"
+
 # Colors
 GREEN='\e[1;32m'
 RED='\e[1;31m'
