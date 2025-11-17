@@ -5,6 +5,16 @@ use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use whirlpool::{Digest, Whirlpool};
 
+/// Detailed errors for checksum line parsing
+#[derive(Debug)]
+enum ParseError {
+    EmptyOrComment,
+    TooShort(usize),
+    InvalidSeparator(String),
+    InvalidHashLength(usize),
+    NonHexCharacters(String),
+}
+
 const DEFAULT_MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
 const DEFAULT_MAX_FILES: usize = 100;
 const HASH_SIZE: usize = 64; // 512 bits = 64 bytes
@@ -262,14 +272,16 @@ fn process_file(
     Ok(())
 }
 
-fn parse_checksum_line(line: &str) -> Option<(&str, &str)> {
+fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
+    let _original_line = line;
     let line = line.trim();
+    
     if line.is_empty() || line.starts_with('#') {
-        return None;
+        return Err(ParseError::EmptyOrComment);
     }
 
     if line.len() < HASH_HEX_SIZE + 2 {
-        return None;
+        return Err(ParseError::TooShort(line.len()));
     }
 
     let (hash_part, rest) = line.split_at(HASH_HEX_SIZE);
@@ -277,14 +289,26 @@ fn parse_checksum_line(line: &str) -> Option<(&str, &str)> {
     let filename = rest[2..].trim_start();
 
     if separator != "  " && separator != " *" {
-        return None;
+        return Err(ParseError::InvalidSeparator(separator.to_string()));
     }
 
-    if !hash_part.chars().all(|c| c.is_ascii_hexdigit()) {
-        return None;
+    if hash_part.len() != HASH_HEX_SIZE {
+        return Err(ParseError::InvalidHashLength(hash_part.len()));
     }
 
-    Some((hash_part, filename))
+    if let Some(non_hex) = hash_part.chars().find(|&c| !c.is_ascii_hexdigit()) {
+        return Err(ParseError::NonHexCharacters(format!(
+            "character '{}' at position {}",
+            non_hex,
+            hash_part.find(non_hex).unwrap_or(0)
+        )));
+    }
+
+    if filename.is_empty() {
+        return Err(ParseError::TooShort(line.len()));
+    }
+
+    Ok((hash_part, filename))
 }
 
 fn check_checksums(
@@ -312,12 +336,24 @@ fn check_checksums(
     let mut total = 0;
     let mut invalid_lines = 0;
 
-    for (line_num, line) in reader.lines().enumerate() {
-        let line = line?;
+    for (line_num, line_result) in reader.lines().enumerate() {
         let line_num = line_num + 1;
+        let line = match line_result {
+            Ok(l) => l,
+            Err(e) => {
+                invalid_lines += 1;
+                if !status_only {
+                    eprintln!(
+                        "whirlpoolsum: {}: line {}: read error: {}",
+                        checksum_source, line_num, e
+                    );
+                }
+                continue;
+            }
+        };
 
         match parse_checksum_line(&line) {
-            Some((expected_hash, filename)) => {
+            Ok((expected_hash, filename)) => {
                 total += 1;
                 
                 // Validate and open target file securely
@@ -352,6 +388,18 @@ fn check_checksums(
                             failed += 1;
                             if !status_only {
                                 eprintln!("{}: FAILED", filename);
+                                eprintln!(
+                                    "whirlpoolsum: {}: line {}: computed hash: {}",
+                                    checksum_source,
+                                    line_num,
+                                    actual_hash
+                                );
+                                eprintln!(
+                                    "whirlpoolsum: {}: line {}: expected hash: {}",
+                                    checksum_source,
+                                    line_num,
+                                    expected_hash
+                                );
                             }
                         }
                     }
@@ -363,13 +411,49 @@ fn check_checksums(
                     }
                 }
             }
-            None => {
+            Err(err) => {
                 invalid_lines += 1;
-                if warn && !status_only {
-                    eprintln!(
-                        "whirlpoolsum: {}: line {}: improperly formatted checksum line",
-                        checksum_source, line_num
-                    );
+                if !status_only {
+                    let source_name = if checksum_source == "-" {
+                        "standard input"
+                    } else {
+                        checksum_source
+                    };
+                    
+                    match err {
+                        ParseError::EmptyOrComment => {
+                            // Quietly ignore empty lines and comments
+                        }
+                        ParseError::TooShort(len) => {
+                            eprintln!(
+                                "whirlpoolsum: {}: line {}: line too short ({} characters). \
+                                 Expected format: <128-character hash> <space><space|*> <filename>",
+                                source_name, line_num, len
+                            );
+                        }
+                        ParseError::InvalidSeparator(sep) => {
+                            eprintln!(
+                                "whirlpoolsum: {}: line {}: invalid separator '{:#?}'. \
+                                 Expected two spaces '  ' or space+asterisk ' *'",
+                                source_name, line_num, sep
+                            );
+                        }
+                        ParseError::InvalidHashLength(len) => {
+                            eprintln!(
+                                "whirlpoolsum: {}: line {}: invalid hash length. \
+                                 Expected 128 hexadecimal characters for WHIRLPOOL-512, got {}",
+                                source_name, line_num, len
+                            );
+                        }
+                        ParseError::NonHexCharacters(pos) => {
+                            eprintln!(
+                                "whirlpoolsum: {}: line {}: invalid hash format. \
+                                 WHIRLPOOL-512 hash must contain only hexadecimal characters (0-9, a-f, A-F). \
+                                 Problem at: {}",
+                                source_name, line_num, pos
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -517,10 +601,16 @@ fn main() -> io::Result<()> {
     let file_counter = AtomicUsize::new(0);
     let exit_code = if check_mode {
         if files.is_empty() {
+            if !status_only {
+                println!("Verifying checksums from standard input...");
+            }
             // Read checksums from stdin
             check_checksums("-", &config, status_only, warn)?
         } else if files.len() == 1 {
-            // Read checksums from specified file
+            if !status_only {
+                println!("Verifying checksums from file: {}", files[0]);
+            }    
+        // Read checksums from specified file
             check_checksums(&files[0], &config, status_only, warn)?
         } else {
             eprintln!("whirlpoolsum: only one checksum file allowed in check mode");
