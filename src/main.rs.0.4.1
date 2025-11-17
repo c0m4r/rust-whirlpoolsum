@@ -1,10 +1,10 @@
-use colored::Colorize;
 use std::fs::{canonicalize, File, Metadata};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use whirlpool::{Digest, Whirlpool}; // Ensure 'colored' feature is enabled if used in help
+use whirlpool::{Digest, Whirlpool};
+use colored::Colorize;
 
 /// Detailed errors for checksum line parsing
 #[derive(Debug)]
@@ -25,14 +25,6 @@ const HASH_HEX_SIZE: usize = HASH_SIZE * 2; // 128 hex characters
 struct Config {
     max_file_size: u64,
     max_files: usize,
-    output_format: OutputFormat,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum OutputFormat {
-    Text, // Default
-    Json,
-    Yaml,
 }
 
 impl Default for Config {
@@ -40,7 +32,6 @@ impl Default for Config {
         Self {
             max_file_size: DEFAULT_MAX_FILE_SIZE,
             max_files: DEFAULT_MAX_FILES,
-            output_format: OutputFormat::Text,
         }
     }
 }
@@ -55,12 +46,11 @@ fn parse_size(size_str: &str) -> io::Result<u64> {
         ));
     }
 
-    let (num_str, suffix) =
-        if let Some(pos) = size_str.find(|c: char| !c.is_ascii_digit() && c != '.') {
-            (&size_str[..pos], &size_str[pos..])
-        } else {
-            (size_str, "")
-        };
+    let (num_str, suffix) = if let Some(pos) = size_str.find(|c: char| !c.is_ascii_digit() && c != '.') {
+        (&size_str[..pos], &size_str[pos..])
+    } else {
+        (size_str, "")
+    };
 
     let num: f64 = num_str.parse().map_err(|e| {
         io::Error::new(
@@ -95,7 +85,9 @@ fn parse_size(size_str: &str) -> io::Result<u64> {
 }
 
 /// Canonicalize paths without security restrictions
-fn safe_canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
+fn safe_canonicalize<P: AsRef<Path>>(
+    path: P,
+) -> io::Result<PathBuf> {
     let path = path.as_ref();
 
     // Skip validation for standard input
@@ -177,7 +169,7 @@ fn secure_open_file<P: AsRef<Path>>(
 fn compute_whirlpool<R: Read>(reader: &mut R) -> io::Result<[u8; HASH_SIZE]> {
     let mut hasher = Whirlpool::new();
     let mut buffer = [0u8; 4096];
-
+    
     loop {
         let bytes_read = reader.read(&mut buffer)?;
         if bytes_read == 0 {
@@ -185,7 +177,7 @@ fn compute_whirlpool<R: Read>(reader: &mut R) -> io::Result<[u8; HASH_SIZE]> {
         }
         hasher.update(&buffer[..bytes_read]);
     }
-
+    
     let hash_result = hasher.finalize();
     let mut hash_bytes = [0u8; HASH_SIZE];
     hash_bytes.copy_from_slice(&hash_result);
@@ -193,161 +185,61 @@ fn compute_whirlpool<R: Read>(reader: &mut R) -> io::Result<[u8; HASH_SIZE]> {
 }
 
 fn hash_to_hex(hash: &[u8]) -> String {
-    hash.iter().map(|byte| format!("{:02x}", byte)).collect()
+    hash.iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect()
 }
-
-// --- New Structs and Functions for JSON/YAML ---
-
-#[derive(Debug)]
-struct HashResult {
-    filename: String,
-    hash: String,
-    status: Option<VerificationStatus>, // Only for check mode
-}
-
-#[derive(Debug)]
-enum VerificationStatus {
-    Ok,
-    Failed,
-    FailedOpenRead,
-}
-
-impl VerificationStatus {
-    fn as_str(&self) -> &'static str {
-        match self {
-            VerificationStatus::Ok => "OK",
-            VerificationStatus::Failed => "FAILED",
-            VerificationStatus::FailedOpenRead => "FAILED_OPEN_READ",
-        }
-    }
-}
-
-fn escape_json_yaml_string(s: &str) -> String {
-    // Basic escaping for JSON/YAML strings
-    // Handles common problematic characters.
-    // A full implementation would be more complex.
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t")
-}
-
-fn output_results_json_yaml(results: &[HashResult], format: OutputFormat, check_mode: bool) {
-    match format {
-        OutputFormat::Json => {
-            println!("{{");
-            if check_mode {
-                println!("  \"verification_results\": [");
-            } else {
-                println!("  \"hash_results\": [");
-            }
-            for (i, res) in results.iter().enumerate() {
-                print!(
-                    "    {{ \"filename\": \"{}\", \"hash\": \"{}\"",
-                    escape_json_yaml_string(&res.filename),
-                    res.hash
-                );
-                if let Some(status) = &res.status {
-                    print!(", \"status\": \"{}\"", status.as_str());
-                }
-                if i == results.len() - 1 {
-                    println!(" }}");
-                } else {
-                    println!(" }},");
-                }
-            }
-            println!("  ]");
-            println!("}}");
-        }
-        OutputFormat::Yaml => {
-            if check_mode {
-                println!("verification_results:");
-            } else {
-                println!("hash_results:");
-            }
-            for res in results {
-                println!(
-                    "  - filename: \"{}\"",
-                    escape_json_yaml_string(&res.filename)
-                );
-                println!("    hash: \"{}\"", res.hash);
-                if let Some(status) = &res.status {
-                    println!("    status: \"{}\"", status.as_str());
-                }
-            }
-        }
-        OutputFormat::Text => {
-            // Should not be called for Text format
-            // This function is only for structured output
-        }
-    }
-}
-
-// --- End New Structs and Functions ---
 
 fn process_file(
     filename: &str,
     config: &Config,
     file_counter: &AtomicUsize,
-) -> io::Result<HashResult> {
-    // Return HashResult
-    let (hash, display_filename) = if filename == "-" {
+) -> io::Result<()> {
+    if filename == "-" {
         let stdin = io::stdin();
         let mut reader = BufReader::new(stdin.lock());
         let hash = compute_whirlpool(&mut reader)?;
-        (hash_to_hex(&hash), "-".to_string()) // Use "-" for display
-    } else {
-        let path = Path::new(filename);
-        let canonical_path = safe_canonicalize(path)?;
-
-        let metadata = canonical_path.metadata().map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!("Failed to access '{}': {}", canonical_path.display(), e),
-            )
-        })?;
-
-        let file = secure_open_file(&canonical_path, config, file_counter, Some(metadata))?;
-
-        let mut reader = BufReader::new(file);
-        let hash = compute_whirlpool(&mut reader)?;
-        (hash_to_hex(&hash), canonical_path.display().to_string()) // Use canonical path string
-    };
-
-    let result = HashResult {
-        filename: display_filename,
-        hash,
-        status: None, // Not used in generation mode
-    };
-
-    match config.output_format {
-        OutputFormat::Text => {
-            println!("{}  {}", result.hash, result.filename);
-        }
-        OutputFormat::Json | OutputFormat::Yaml => {
-            // Collect results for structured output (done later)
-        }
+        println!("{}  -", hash_to_hex(&hash));
+        return Ok(());
     }
 
-    Ok(result)
+    let path = Path::new(filename);
+    let canonical_path = safe_canonicalize(path)?;
+    
+    let metadata = canonical_path.metadata().map_err(|e| {
+        io::Error::new(
+            e.kind(),
+            format!("Failed to access '{}': {}", canonical_path.display(), e),
+        )
+    })?;
+
+    let file = secure_open_file(
+        &canonical_path,
+        config,
+        file_counter,
+        Some(metadata),
+    )?;
+    
+    let mut reader = BufReader::new(file);
+    let hash = compute_whirlpool(&mut reader)?;
+    println!("{}  {}", hash_to_hex(&hash), canonical_path.display());
+    Ok(())
 }
 
 fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
     let _original_line = line;
     let line = line.trim();
-
+    
     if line.is_empty() || line.starts_with('#') {
         return Err(ParseError::EmptyOrComment);
     }
 
-    if line.len() < HASH_HEX_SIZE + 1 {
-        // At least one space after hash
+    if line.len() < HASH_HEX_SIZE + 1 { // At least one space after hash
         return Err(ParseError::TooShort(line.len()));
     }
 
     let (hash_part, rest) = line.split_at(HASH_HEX_SIZE);
-
+    
     // First validate the hash part before checking separator
     if hash_part.len() != HASH_HEX_SIZE {
         return Err(ParseError::InvalidHashLength(hash_part.len()));
@@ -367,14 +259,11 @@ fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
     }
 
     // Allow single space, double space, or space+asterisk as separators
-    let (_separator, filename) = if rest.starts_with("  ") {
-        // Two spaces
+    let (_separator, filename) = if rest.starts_with("  ") { // Two spaces
         ("  ", &rest[2..].trim_start())
-    } else if rest.starts_with(" *") {
-        // Space + asterisk
+    } else if rest.starts_with(" *") { // Space + asterisk
         (" *", &rest[2..].trim_start())
-    } else if rest.starts_with(' ') {
-        // Single space
+    } else if rest.starts_with(' ') { // Single space
         (" ", &rest[1..].trim_start())
     } else {
         return Err(ParseError::InvalidSeparator(rest.chars().take(2).collect()));
@@ -400,15 +289,18 @@ fn check_checksums(
         Box::new(BufReader::new(io::stdin()))
     } else {
         let canonical_checksum_path = safe_canonicalize(checksum_path)?;
-        let checksum_file =
-            secure_open_file(&canonical_checksum_path, config, &file_counter, None)?;
+        let checksum_file = secure_open_file(
+            &canonical_checksum_path,
+            config,
+            &file_counter,
+            None,
+        )?;
         Box::new(BufReader::new(checksum_file))
     };
 
     let mut failed = 0;
     let mut total = 0;
     let mut invalid_lines = 0;
-    let mut results = Vec::new(); // Collect results for structured output
 
     for (line_num, line_result) in reader.lines().enumerate() {
         let line_num = line_num + 1;
@@ -429,15 +321,20 @@ fn check_checksums(
         match parse_checksum_line(&line) {
             Ok((expected_hash, filename)) => {
                 total += 1;
-
+                
                 // Validate and open target file securely
                 let target_path = Path::new(filename);
                 let canonical_target = safe_canonicalize(target_path)?;
-
+                
                 let result = File::open(&canonical_target)
                     .and_then(|file| {
                         let metadata = file.metadata()?;
-                        secure_open_file(&canonical_target, config, &file_counter, Some(metadata))
+                        secure_open_file(
+                            &canonical_target,
+                            config,
+                            &file_counter,
+                            Some(metadata),
+                        )
                     })
                     .map_err(|e| format!("{}", e))
                     .and_then(|file| {
@@ -449,43 +346,34 @@ fn check_checksums(
 
                 match result {
                     Ok(actual_hash) => {
-                        let status = if actual_hash.to_lowercase() == expected_hash.to_lowercase() {
-                            if !status_only && !quiet && config.output_format == OutputFormat::Text
-                            {
+                        if actual_hash.to_lowercase() == expected_hash.to_lowercase() {
+                            if !status_only && !quiet {
                                 println!("{}: OK", filename);
                             }
-                            VerificationStatus::Ok
                         } else {
                             failed += 1;
-                            if !status_only && config.output_format == OutputFormat::Text {
+                            if !status_only {
                                 eprintln!("{}: FAILED", filename);
                                 eprintln!(
                                     "whirlpoolsum: {}: line {}: computed hash: {}",
-                                    checksum_source, line_num, actual_hash
+                                    checksum_source,
+                                    line_num,
+                                    actual_hash
                                 );
                                 eprintln!(
                                     "whirlpoolsum: {}: line {}: expected hash: {}",
-                                    checksum_source, line_num, expected_hash
+                                    checksum_source,
+                                    line_num,
+                                    expected_hash
                                 );
                             }
-                            VerificationStatus::Failed
-                        };
-                        results.push(HashResult {
-                            filename: filename.to_string(),
-                            hash: actual_hash,
-                            status: Some(status),
-                        });
+                        }
                     }
                     Err(err) => {
                         failed += 1;
-                        if !status_only && config.output_format == OutputFormat::Text {
+                        if !status_only {
                             eprintln!("{}: FAILED open or read - {}", filename, err);
                         }
-                        results.push(HashResult {
-                            filename: filename.to_string(),
-                            hash: expected_hash.to_string(),
-                            status: Some(VerificationStatus::FailedOpenRead),
-                        }); // Store expected hash as placeholder
                     }
                 }
             }
@@ -497,7 +385,7 @@ fn check_checksums(
                     } else {
                         checksum_source
                     };
-
+                    
                     match err {
                         ParseError::EmptyOrComment => {
                             // Quietly ignore empty lines and comments
@@ -537,11 +425,6 @@ fn check_checksums(
         }
     }
 
-    // Output structured results if needed
-    if config.output_format == OutputFormat::Json || config.output_format == OutputFormat::Yaml {
-        output_results_json_yaml(&results, config.output_format, true); // true for check mode
-    }
-
     if !status_only {
         if failed > 0 {
             eprintln!(
@@ -552,17 +435,12 @@ fn check_checksums(
         if invalid_lines > 0 && warn {
             eprintln!(
                 "whirlpoolsum: WARNING: {} of {} lines are improperly formatted",
-                invalid_lines,
-                total + invalid_lines
+                invalid_lines, total + invalid_lines
             );
         }
     }
 
-    Ok(if failed > 0 || invalid_lines > 0 {
-        1
-    } else {
-        0
-    })
+    Ok(if failed > 0 || invalid_lines > 0 { 1 } else { 0 })
 }
 
 fn print_help() {
@@ -570,13 +448,11 @@ fn print_help() {
     let license = env!("CARGO_PKG_LICENSE");
     let stdout = io::stdout();
     let mut stdout = stdout.lock();
-
-    stdout
-        .write_all(
-            format!(
-                "whirlpoolsum v{} by Qwen3-Max & c0m4r
-https://github.com/c0m4r/rust-whirlpoolsum/  
-  
+    
+    stdout.write_all(
+        format!(
+            "whirlpoolsum v{} by Qwen3-Max & c0m4r
+https://github.com/c0m4r/rust-whirlpoolsum/
 LICENSE: {}
 
 Usage: whirlpoolsum [OPTION]... [FILE]...
@@ -591,8 +467,6 @@ Options:
   -q, --quiet       don't print OK for each successfully verified file
       --max-file-size SIZE     set maximum file size (default: 1G)
       --max-files COUNT        set maximum number of files (default: 100)
-  --json            output results in JSON format
-  --yaml            output results in YAML format
   -h, --help        display this help and exit
 
 SIZE format examples: 512M, 1G, 2.5GB
@@ -610,17 +484,15 @@ Exit status:
 
 Current configuration:
   Maximum file size: {}
-  Maximum files: {}
-  Output format: {:?}\n",
-                version.green(),
-                license,
-                DEFAULT_MAX_FILE_SIZE,
-                DEFAULT_MAX_FILES,
-                OutputFormat::Text // Default for help display
-            )
-            .as_bytes(),
+  Maximum files: {}\n",
+            version.green(),
+            license,
+            DEFAULT_MAX_FILE_SIZE,
+            DEFAULT_MAX_FILES
         )
-        .expect("Failed to write help message");
+        .as_bytes(),
+    )
+    .expect("Failed to write help message");
 }
 
 fn main() -> io::Result<()> {
@@ -660,8 +532,6 @@ fn main() -> io::Result<()> {
                     process::exit(2);
                 }
             }
-            "--json" => config.output_format = OutputFormat::Json,
-            "--yaml" => config.output_format = OutputFormat::Yaml,
             "-h" | "--help" => {
                 print_help();
                 return Ok(());
@@ -689,29 +559,19 @@ fn main() -> io::Result<()> {
         process::exit(2);
     }
 
-    // Validate conflicting options
-    if config.output_format != OutputFormat::Text && status_only {
-        eprintln!("error: --json/--yaml cannot be used with --status");
-        process::exit(2);
-    }
-    if config.output_format != OutputFormat::Text && quiet && !check_mode {
-        eprintln!("error: --json/--yaml cannot be used with -q/--quiet in generation mode");
-        process::exit(2);
-    }
-
     let file_counter = AtomicUsize::new(0);
     let exit_code = if check_mode {
         if files.is_empty() {
-            if !status_only && !quiet && config.output_format == OutputFormat::Text {
+            if !status_only && !quiet {
                 println!("Verifying checksums from standard input...");
             }
             // Read checksums from stdin
             check_checksums("-", &config, status_only, warn, quiet)?
         } else if files.len() == 1 {
-            if !status_only && !quiet && config.output_format == OutputFormat::Text {
+            if !status_only && !quiet {
                 println!("Verifying checksums from file: {}", files[0]);
-            }
-            // Read checksums from specified file
+            }    
+        // Read checksums from specified file
             check_checksums(&files[0], &config, status_only, warn, quiet)?
         } else {
             eprintln!("whirlpoolsum: only one checksum file allowed in check mode");
@@ -719,15 +579,11 @@ fn main() -> io::Result<()> {
         }
     } else {
         // Generation mode
-        let mut results = Vec::new(); // Collect results for structured output
-        let mut exit_code = 0;
-
         if files.is_empty() {
-            let result = process_file("-", &config, &file_counter)?;
-            if config.output_format != OutputFormat::Text {
-                results.push(result);
-            }
+            process_file("-", &config, &file_counter)?;
+            0
         } else {
+            let mut exit_code = 0;
             for filename in &files {
                 if file_counter.load(Ordering::SeqCst) >= config.max_files {
                     eprintln!(
@@ -737,28 +593,14 @@ fn main() -> io::Result<()> {
                     exit_code = 3;
                     break;
                 }
-
-                match process_file(filename, &config, &file_counter) {
-                    Ok(result) => {
-                        if config.output_format != OutputFormat::Text {
-                            results.push(result);
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("whirlpoolsum: {}: {}", filename, e);
-                        exit_code = 1; // Set error code if any file fails
-                    }
+                
+                if let Err(e) = process_file(filename, &config, &file_counter) {
+                    eprintln!("whirlpoolsum: {}: {}", filename, e);
+                    exit_code = 1;
                 }
             }
+            exit_code
         }
-
-        // Output structured results if needed
-        if config.output_format == OutputFormat::Json || config.output_format == OutputFormat::Yaml
-        {
-            output_results_json_yaml(&results, config.output_format, false); // false for generation mode
-        }
-
-        exit_code
     };
 
     if exit_code != 0 {
