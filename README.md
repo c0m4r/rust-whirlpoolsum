@@ -7,6 +7,7 @@ Vibe-coded with Qwen3-Max (Thinking @ 81,920 tokens)
 ## Deps (crates)
 
 * [whirlpool](https://crates.io/crates/whirlpool)
+* [colored](https://crates.io/crates/colored)
 
 ## Quick install (x86_64/glibc)
 
@@ -25,19 +26,27 @@ On Alpine install [gcompat](https://git.adelielinux.org/adelie/gcompat) with `ap
 
 Text checksum (stdin)
 
-`echo -n "All your base are belong to us" | whirlpoolsum`
+```bash
+echo -n "All your base are belong to us" | whirlpoolsum
+```
 
 File checksum
 
-`whirlpoolsum example.txt`
+```bash
+whirlpoolsum example.txt
+```
 
 Verify file checksum (stdin)
 
-`echo -n "abcdef12345(...)  example.txt" | whirlpoolsum -c`
+```bash
+echo -n "abcdef12345(...)  example.txt" | whirlpoolsum -c
+```
 
 Verify file checksum with a checksum file
 
-`whirlpoolsum -c example.txt.wrl`
+```bash
+whirlpoolsum -c example.txt.wrl
+```
 
 ## License
 
