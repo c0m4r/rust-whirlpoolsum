@@ -1,0 +1,108 @@
+_whirlpoolsum() {
+    local cur prev words cword split
+    _init_completion -s || return
+
+    # List of all options
+    local options="-c --check --status --warn -q --quiet --benchmark --max-file-size --max-files --json --yaml -h --help"
+    
+    # Options that require an argument
+    local options_with_args="--max-file-size --max-files"
+    
+    # Check if we're in check mode
+    local in_check_mode=0
+    for word in "${words[@]}"; do
+        if [[ "$word" == "-c" || "$word" == "--check" ]]; then
+            in_check_mode=1
+            break
+        fi
+    done
+
+    # Options that make sense only in generation mode
+    local gen_mode_options="--benchmark"
+    
+    # Options that make sense only in check mode
+    local check_mode_options="--status --warn -q --quiet"
+    
+    # Check if we already have files specified (excluding options)
+    local file_count=0
+    local after_separator=0
+    for word in "${words[@]:1}"; do
+        if [[ "$after_separator" -eq 1 || ("$word" != -* && "$word" != "--") ]]; then
+            if [[ "$word" != -* ]]; then
+                ((file_count++))
+            fi
+        fi
+        if [[ "$word" == "--" ]]; then
+            after_separator=1
+        fi
+    done
+    
+    # Handle options requiring arguments
+    case "$prev" in
+        --max-file-size)
+            # Suggest common size formats
+            COMPREPLY=( $(compgen -W "512K 1M 10M 100M 512M 1G 2G 5G 10G" -- "$cur") )
+            return 0
+            ;;
+        --max-files)
+            # Suggest reasonable file count numbers
+            COMPREPLY=( $(compgen -W "10 25 50 100 250 500 1000" -- "$cur") )
+            return 0
+            ;;
+    esac
+    
+    # If current word starts with a dash, complete options
+    if [[ "$cur" == -* ]]; then
+        local available_options="$options"
+        
+        # Filter out incompatible options based on context
+        if [[ "$in_check_mode" -eq 1 ]]; then
+            # Remove generation-mode only options
+            for opt in $gen_mode_options; do
+                available_options=${available_options//$opt/}
+            done
+        else
+            # Remove check-mode only options if we're not in check mode
+            # (except when no files are specified yet, as -c might follow)
+            if [[ "$file_count" -gt 0 ]]; then
+                for opt in $check_mode_options; do
+                    available_options=${available_options//$opt/}
+                done
+            fi
+        fi
+        
+        # If we already have a mode-changing option like --json or --yaml,
+        # filter out incompatible options
+        local has_output_format=0
+        for word in "${words[@]}"; do
+            if [[ "$word" == "--json" || "$word" == "--yaml" ]]; then
+                has_output_format=1
+                break
+            fi
+        done
+        
+        if [[ "$has_output_format" -eq 1 ]]; then
+            available_options=${available_options//--status/}
+            if [[ "$in_check_mode" -eq 0 ]]; then
+                available_options=${available_options//-q/}
+                available_options=${available_options//--quiet/}
+            fi
+        fi
+        
+        COMPREPLY=( $(compgen -W "$available_options" -- "$cur") )
+        return 0
+    fi
+    
+    # Handle check mode (only one checksum file allowed)
+    if [[ "$in_check_mode" -eq 1 ]]; then
+        if [[ "$file_count" -eq 0 ]]; then
+            _filedir
+        fi
+        return 0
+    fi
+    
+    # Default case: complete file names
+    _filedir
+}
+
+complete -F _whirlpoolsum whirlpoolsum
