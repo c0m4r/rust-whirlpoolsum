@@ -434,15 +434,6 @@ fn run_benchmark_test() -> io::Result<()> {
     println!("  Score:          {} points", score.to_string().bright_white().bold());
     println!("  Rating:         {}", rating);
     println!("═════════════════════════════════════════════════════");
-/*    println!();
-    println!("{}", "Score Reference:".bright_black());
-    println!("  2000+  = A++    (200+ MB/s)");
-    println!("  1000+  = A+     (100+ MB/s)");
-    println!("  500+   = A      (50+ MB/s)");
-    println!("  250+   = B      (25+ MB/s)");
-    println!("  100+   = C      (10+ MB/s)");
-    println!("  <100   = D      (<10 MB/s)");
-  */  
     Ok(())
 }
 
