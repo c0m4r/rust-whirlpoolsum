@@ -24,6 +24,7 @@ const DEFAULT_MAX_FILES: usize = 100;
 const HASH_SIZE: usize = 64; // 512 bits = 64 bytes
 const HASH_HEX_SIZE: usize = HASH_SIZE * 2; // 128 hex characters
 const BENCHMARK_FILE_SIZE: usize = 100 * 1024 * 1024; // 100MB
+const BUFFER_SIZE: usize = 65536; // 64KB optimal for most systems
 
 /// Configuration settings for security and resource limits
 #[derive(Clone)]
@@ -76,6 +77,13 @@ fn parse_size(size_str: &str) -> io::Result<u64> {
         )
     })?;
 
+    if num < 0.0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Size cannot be negative",
+        ));
+    }
+
     let multiplier = match suffix.to_lowercase().as_str() {
         "" | "b" => 1.0,
         "k" | "kb" => 1024.0,
@@ -91,7 +99,7 @@ fn parse_size(size_str: &str) -> io::Result<u64> {
     };
 
     let size = num * multiplier;
-    if size > u64::MAX as f64 || size < 0.0 {
+    if size > u64::MAX as f64 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "Size value out of range",
@@ -101,16 +109,14 @@ fn parse_size(size_str: &str) -> io::Result<u64> {
     Ok(size as u64)
 }
 
-/// Canonicalize paths without security restrictions
+/// Canonicalize paths
 fn safe_canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
     let path = path.as_ref();
 
-    // Skip validation for standard input
     if path == Path::new("-") {
         return Ok(PathBuf::from("-"));
     }
 
-    // Canonicalize the path (resolves symlinks and normalizes)
     canonicalize(path).map_err(|e| {
         io::Error::new(
             e.kind(),
@@ -128,19 +134,14 @@ fn secure_open_file<P: AsRef<Path>>(
 ) -> io::Result<File> {
     let path = path.as_ref();
 
-    // Check file count limit
-    let current_count = file_counter.fetch_add(1, Ordering::SeqCst);
+    let current_count = file_counter.fetch_add(1, Ordering::Relaxed);
     if current_count >= config.max_files {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!(
-                "Maximum file limit reached ({}). Use --max-files to increase.",
-                config.max_files
-            ),
-        ));
+        return Err(io::Error::other(format!(
+            "Maximum file limit reached ({}). Use --max-files to increase.",
+            config.max_files
+        )));
     }
 
-    // Get metadata if not provided
     let metadata = match metadata {
         Some(meta) => meta,
         None => path.metadata().map_err(|e| {
@@ -151,7 +152,6 @@ fn secure_open_file<P: AsRef<Path>>(
         })?,
     };
 
-    // Skip directories
     if metadata.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -159,7 +159,6 @@ fn secure_open_file<P: AsRef<Path>>(
         ));
     }
 
-    // Validate file size
     let file_size = metadata.len();
     if file_size > config.max_file_size {
         return Err(io::Error::new(
@@ -172,7 +171,6 @@ fn secure_open_file<P: AsRef<Path>>(
         ));
     }
 
-    // Open file securely
     File::open(path).map_err(|e| {
         io::Error::new(
             e.kind(),
@@ -183,7 +181,7 @@ fn secure_open_file<P: AsRef<Path>>(
 
 fn compute_whirlpool<R: Read>(reader: &mut R) -> io::Result<[u8; HASH_SIZE]> {
     let mut hasher = Whirlpool::new();
-    let mut buffer = [0u8; 8192]; // Increased from 4096 for better performance
+    let mut buffer = [0u8; BUFFER_SIZE];
 
     loop {
         let bytes_read = reader.read(&mut buffer)?;
@@ -204,7 +202,7 @@ fn compute_whirlpool_with_count<R: Read>(
     byte_count: &mut u64,
 ) -> io::Result<[u8; HASH_SIZE]> {
     let mut hasher = Whirlpool::new();
-    let mut buffer = [0u8; 8192];
+    let mut buffer = [0u8; BUFFER_SIZE];
     *byte_count = 0;
 
     loop {
@@ -223,17 +221,20 @@ fn compute_whirlpool_with_count<R: Read>(
 }
 
 fn hash_to_hex(hash: &[u8]) -> String {
-    hash.iter().map(|byte| format!("{:02x}", byte)).collect()
+    hash.iter()
+        .fold(String::with_capacity(HASH_HEX_SIZE), |mut acc, byte| {
+            use std::fmt::Write;
+            let _ = write!(acc, "{:02x}", byte);
+            acc
+        })
 }
-
-// --- Structs and Functions for JSON/YAML ---
 
 #[derive(Debug, Clone)]
 struct HashResult {
     filename: String,
     hash: String,
-    status: Option<VerificationStatus>,    // Only for check mode
-    benchmark_info: Option<BenchmarkInfo>, // Only when benchmarking
+    status: Option<VerificationStatus>,
+    benchmark_info: Option<BenchmarkInfo>,
 }
 
 #[derive(Debug, Clone)]
@@ -261,7 +262,7 @@ impl VerificationStatus {
 }
 
 fn escape_json_string(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
+    let mut result = String::with_capacity(s.len() + s.len() / 4);
     for c in s.chars() {
         match c {
             '"' => result.push_str("\\\""),
@@ -272,7 +273,8 @@ fn escape_json_string(s: &str) -> String {
             '\x08' => result.push_str("\\b"),
             '\x0C' => result.push_str("\\f"),
             c if c.is_control() => {
-                result.push_str(&format!("\\u{:04x}", c as u32));
+                use std::fmt::Write;
+                let _ = write!(result, "\\u{:04x}", c as u32);
             }
             c => result.push(c),
         }
@@ -281,8 +283,7 @@ fn escape_json_string(s: &str) -> String {
 }
 
 fn escape_yaml_string(s: &str) -> String {
-    // For YAML, we'll use double-quoted strings with escaping
-    let mut result = String::with_capacity(s.len());
+    let mut result = String::with_capacity(s.len() + s.len() / 4);
     for c in s.chars() {
         match c {
             '"' => result.push_str("\\\""),
@@ -348,27 +349,22 @@ fn output_results_json_yaml(results: &[HashResult], format: OutputFormat, check_
                 }
             }
         }
-        OutputFormat::Text => {
-            // Should not be called for Text format
-        }
+        OutputFormat::Text => {}
     }
 }
-
-// --- End Structs and Functions ---
 
 fn run_benchmark_test() -> io::Result<()> {
     println!("{}", "=== WHIRLPOOL Benchmark Test ===".green().bold());
     println!("Generating 100 MB of random data...\n");
 
-    // Generate 100MB of data
-    let data = vec![0xA5u8; BENCHMARK_FILE_SIZE]; // Use pattern 0xA5 for repeatability
+    let data = vec![0xA5u8; BENCHMARK_FILE_SIZE];
     let mut cursor = Cursor::new(&data);
 
     println!("Starting benchmark...\n");
     let start = Instant::now();
 
     let mut hasher = Whirlpool::new();
-    let mut buffer = [0u8; 8192];
+    let mut buffer = [0u8; BUFFER_SIZE];
     let mut bytes_processed = 0u64;
 
     loop {
@@ -383,13 +379,8 @@ fn run_benchmark_test() -> io::Result<()> {
     let hash_result = hasher.finalize();
     let duration = start.elapsed();
 
-    // Convert hash to hex
-    let hash = hash_result
-        .iter()
-        .map(|byte| format!("{:02x}", byte))
-        .collect::<String>();
+    let hash = hash_to_hex(hash_result.as_slice());
 
-    // Calculate throughput
     let duration_secs = duration.as_secs_f64();
     let throughput_mbps = if duration_secs > 0.0 {
         (bytes_processed as f64 / 1_048_576.0) / duration_secs
@@ -397,16 +388,8 @@ fn run_benchmark_test() -> io::Result<()> {
         0.0
     };
 
-    // Calculate benchmark score
-    // Score = (MB/s) * 10, rounded to nearest integer
-    // This gives a nice scale where:
-    // - Score of 100 = 10 MB/s (slow)
-    // - Score of 500 = 50 MB/s (average)
-    // - Score of 1000 = 100 MB/s (fast)
-    // - Score of 2000+ = 200+ MB/s (very fast)
     let score = (throughput_mbps * 10.0).round() as u64;
 
-    // Determine performance rating
     let rating = if score >= 2000 {
         "A++".bright_magenta().bold()
     } else if score >= 1000 {
@@ -421,7 +404,6 @@ fn run_benchmark_test() -> io::Result<()> {
         "D".red().bold()
     };
 
-    // Display results
     println!("{}", "Benchmark Results:".green().bold());
     println!("═════════════════════════════════════════════════════");
     println!("Data size:        {} bytes (100 MB)", bytes_processed);
@@ -459,7 +441,7 @@ fn process_file(
 
     let (hash, display_filename, bytes_processed) = if filename == "-" {
         let stdin = io::stdin();
-        let mut reader = BufReader::new(stdin.lock());
+        let mut reader = BufReader::with_capacity(BUFFER_SIZE, stdin.lock());
         let mut bytes = 0u64;
         let hash = if config.benchmark {
             compute_whirlpool_with_count(&mut reader, &mut bytes)?
@@ -481,7 +463,7 @@ fn process_file(
         let file_size = metadata.len();
         let file = secure_open_file(&canonical_path, config, file_counter, Some(metadata))?;
 
-        let mut reader = BufReader::new(file);
+        let mut reader = BufReader::with_capacity(BUFFER_SIZE, file);
         let mut bytes = 0u64;
         let hash = if config.benchmark {
             compute_whirlpool_with_count(&mut reader, &mut bytes)?
@@ -540,24 +522,24 @@ fn process_files_parallel(
     let num_threads = thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
-        .min(files.len());
+        .min(files.len())
+        .max(1);
 
     let results = Arc::new(Mutex::new(Vec::with_capacity(files.len())));
     let mut handles = vec![];
 
-    // Split files into chunks for each thread
-    let chunk_size = (files.len() + num_threads - 1) / num_threads;
+    let chunk_size = files.len().div_ceil(num_threads);
 
-    for chunk in files.chunks(chunk_size) {
+    for (chunk_idx, chunk) in files.chunks(chunk_size).enumerate() {
         let chunk = chunk.to_vec();
         let config = config.clone();
         let file_counter = Arc::clone(&file_counter);
         let results = Arc::clone(&results);
+        let base_idx = chunk_idx * chunk_size;
 
         let handle = thread::spawn(move || {
             for (idx, filename) in chunk.iter().enumerate() {
-                // Check if we've exceeded the file limit
-                if file_counter.load(Ordering::SeqCst) >= config.max_files {
+                if file_counter.load(Ordering::Relaxed) >= config.max_files {
                     break;
                 }
 
@@ -567,19 +549,17 @@ fn process_files_parallel(
                 };
 
                 let mut results = results.lock().unwrap();
-                results.push((idx, result));
+                results.push((base_idx + idx, result));
             }
         });
 
         handles.push(handle);
     }
 
-    // Wait for all threads to complete
     for handle in handles {
         let _ = handle.join();
     }
 
-    // Sort results to maintain original file order
     let mut results = Arc::try_unwrap(results)
         .expect("Failed to unwrap results")
         .into_inner()
@@ -603,7 +583,6 @@ fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
 
     let (hash_part, rest) = line.split_at(HASH_HEX_SIZE);
 
-    // Validate the hash part
     if hash_part.len() != HASH_HEX_SIZE {
         return Err(ParseError::InvalidHashLength(hash_part.len()));
     }
@@ -616,18 +595,16 @@ fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
         )));
     }
 
-    // Check separator and filename
     if rest.is_empty() {
         return Err(ParseError::TooShort(line.len()));
     }
 
-    // Allow single space, double space, or space+asterisk as separators
-    let filename = if rest.starts_with("  ") {
-        rest[2..].trim_start()
-    } else if rest.starts_with(" *") {
-        rest[2..].trim_start()
-    } else if rest.starts_with(' ') {
-        rest[1..].trim_start()
+    let filename = if let Some(stripped) = rest.strip_prefix("  ") {
+        stripped.trim_start()
+    } else if let Some(stripped) = rest.strip_prefix(" *") {
+        stripped.trim_start()
+    } else if let Some(stripped) = rest.strip_prefix(' ') {
+        stripped.trim_start()
     } else {
         return Err(ParseError::InvalidSeparator(rest.chars().take(2).collect()));
     };
@@ -649,18 +626,18 @@ fn check_checksums(
     let file_counter = AtomicUsize::new(0);
     let checksum_path = Path::new(checksum_source);
     let reader: Box<dyn BufRead> = if checksum_source == "-" {
-        Box::new(BufReader::new(io::stdin()))
+        Box::new(BufReader::with_capacity(BUFFER_SIZE, io::stdin()))
     } else {
         let canonical_checksum_path = safe_canonicalize(checksum_path)?;
         let checksum_file =
             secure_open_file(&canonical_checksum_path, config, &file_counter, None)?;
-        Box::new(BufReader::new(checksum_file))
+        Box::new(BufReader::with_capacity(BUFFER_SIZE, checksum_file))
     };
 
     let mut failed = 0;
     let mut total = 0;
     let mut invalid_lines = 0;
-    let mut results = Vec::new(); // Collect results for structured output
+    let mut results = Vec::new();
 
     for (line_num, line_result) in reader.lines().enumerate() {
         let line_num = line_num + 1;
@@ -682,7 +659,6 @@ fn check_checksums(
             Ok((expected_hash, filename)) => {
                 total += 1;
 
-                // Validate and open target file securely
                 let target_path = Path::new(filename);
                 let canonical_target = safe_canonicalize(target_path)?;
 
@@ -693,7 +669,7 @@ fn check_checksums(
                     })
                     .map_err(|e| format!("{}", e))
                     .and_then(|file| {
-                        let mut reader = BufReader::new(file);
+                        let mut reader = BufReader::with_capacity(BUFFER_SIZE, file);
                         compute_whirlpool(&mut reader)
                             .map(|hash| hash_to_hex(&hash))
                             .map_err(|e| format!("hash computation failed: {}", e))
@@ -701,7 +677,7 @@ fn check_checksums(
 
                 match result {
                     Ok(actual_hash) => {
-                        let status = if actual_hash.to_lowercase() == expected_hash.to_lowercase() {
+                        let status = if actual_hash.eq_ignore_ascii_case(expected_hash) {
                             if !status_only && !quiet && config.output_format == OutputFormat::Text
                             {
                                 println!("{}: OK", filename);
@@ -753,9 +729,7 @@ fn check_checksums(
                     };
 
                     match err {
-                        ParseError::EmptyOrComment => {
-                            // Quietly ignore empty lines and comments
-                        }
+                        ParseError::EmptyOrComment => {}
                         ParseError::TooShort(len) => {
                             eprintln!(
                                 "whirlpoolsum: {}: line {}: line too short ({} characters). \
@@ -791,9 +765,8 @@ fn check_checksums(
         }
     }
 
-    // Output structured results if needed
     if config.output_format == OutputFormat::Json || config.output_format == OutputFormat::Yaml {
-        output_results_json_yaml(&results, config.output_format, true); // true for check mode
+        output_results_json_yaml(&results, config.output_format, true);
     }
 
     if !status_only && config.output_format == OutputFormat::Text {
@@ -885,7 +858,6 @@ fn main() -> io::Result<()> {
     let mut quiet = false;
     let mut files = Vec::new();
 
-    // Parse command line arguments
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-c" | "--check" => check_mode = true,
@@ -933,7 +905,6 @@ fn main() -> io::Result<()> {
         }
     }
 
-    // Validate resource limits
     if config.max_file_size == 0 {
         eprintln!("error: maximum file size cannot be zero");
         process::exit(2);
@@ -943,7 +914,6 @@ fn main() -> io::Result<()> {
         process::exit(2);
     }
 
-    // Validate conflicting options
     if config.output_format != OutputFormat::Text && status_only {
         eprintln!("error: --json/--yaml cannot be used with --status");
         process::exit(2);
@@ -959,7 +929,6 @@ fn main() -> io::Result<()> {
 
     let file_counter = Arc::new(AtomicUsize::new(0));
 
-    // Special case: benchmark mode with no files runs a benchmark test
     if config.benchmark && files.is_empty() && !check_mode {
         return run_benchmark_test();
     }
@@ -980,7 +949,6 @@ fn main() -> io::Result<()> {
             process::exit(2);
         }
     } else {
-        // Generation mode
         let mut exit_code = 0;
 
         if files.is_empty() {
@@ -989,7 +957,6 @@ fn main() -> io::Result<()> {
                 output_results_json_yaml(&[result], config.output_format, false);
             }
         } else if files.len() == 1 {
-            // Single file - no need for multithreading
             match process_file(&files[0], &config, &file_counter) {
                 Ok(result) => {
                     if config.output_format != OutputFormat::Text {
@@ -1002,7 +969,6 @@ fn main() -> io::Result<()> {
                 }
             }
         } else {
-            // Multiple files - use multithreading
             let results = process_files_parallel(&files, &config, Arc::clone(&file_counter));
 
             let mut collected_results = Vec::new();
@@ -1020,8 +986,7 @@ fn main() -> io::Result<()> {
                 }
             }
 
-            // Check if we hit the file limit
-            if file_counter.load(Ordering::SeqCst) >= config.max_files {
+            if file_counter.load(Ordering::Relaxed) >= config.max_files {
                 eprintln!(
                     "whirlpoolsum: maximum file limit reached ({}). Some files were skipped.",
                     config.max_files
@@ -1029,7 +994,6 @@ fn main() -> io::Result<()> {
                 exit_code = 3;
             }
 
-            // Output structured results if needed
             if config.output_format == OutputFormat::Json
                 || config.output_format == OutputFormat::Yaml
             {
