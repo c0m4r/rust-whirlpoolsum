@@ -33,6 +33,12 @@ File checksum
 whirlpoolsum example.txt
 ```
 
+Multiple files checksums (with multithreading)
+
+```bash
+whirlpoolsum --max-files 1000 /usr/sbin/*
+```
+
 Verify file checksum (stdin)
 
 ```bash
@@ -43,6 +49,20 @@ Verify file checksum with a checksum file
 
 ```bash
 whirlpoolsum -c example.txt.wrl
+```
+
+## Benchmarking
+
+Benchmark (measure time and throughput for a given filename(s))
+
+```bash
+whirlpoolsum --benchmark example.txt
+```
+
+Benchmark (system test with score)
+
+```bash
+whirlpoolsum --benchmark
 ```
 
 ## License
