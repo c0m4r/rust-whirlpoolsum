@@ -1,12 +1,12 @@
 use colored::Colorize;
 use std::fs::{canonicalize, File, Metadata};
-use std::io::{self, BufRead, BufReader, Read, Write, Cursor};
+use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Instant};
+use std::time::Instant;
 use whirlpool::{Digest, Whirlpool};
 
 /// Detailed errors for checksum line parsing
@@ -199,7 +199,10 @@ fn compute_whirlpool<R: Read>(reader: &mut R) -> io::Result<[u8; HASH_SIZE]> {
     Ok(hash_bytes)
 }
 
-fn compute_whirlpool_with_count<R: Read>(reader: &mut R, byte_count: &mut u64) -> io::Result<[u8; HASH_SIZE]> {
+fn compute_whirlpool_with_count<R: Read>(
+    reader: &mut R,
+    byte_count: &mut u64,
+) -> io::Result<[u8; HASH_SIZE]> {
     let mut hasher = Whirlpool::new();
     let mut buffer = [0u8; 8192];
     *byte_count = 0;
@@ -229,7 +232,7 @@ fn hash_to_hex(hash: &[u8]) -> String {
 struct HashResult {
     filename: String,
     hash: String,
-    status: Option<VerificationStatus>, // Only for check mode
+    status: Option<VerificationStatus>,    // Only for check mode
     benchmark_info: Option<BenchmarkInfo>, // Only when benchmarking
 }
 
@@ -354,20 +357,20 @@ fn output_results_json_yaml(results: &[HashResult], format: OutputFormat, check_
 // --- End Structs and Functions ---
 
 fn run_benchmark_test() -> io::Result<()> {
-    println!("{}","=== WHIRLPOOL Benchmark Test ===".green().bold());
+    println!("{}", "=== WHIRLPOOL Benchmark Test ===".green().bold());
     println!("Generating 100 MB of random data...\n");
-    
+
     // Generate 100MB of data
     let data = vec![0xA5u8; BENCHMARK_FILE_SIZE]; // Use pattern 0xA5 for repeatability
     let mut cursor = Cursor::new(&data);
-    
+
     println!("Starting benchmark...\n");
     let start = Instant::now();
-    
+
     let mut hasher = Whirlpool::new();
     let mut buffer = [0u8; 8192];
     let mut bytes_processed = 0u64;
-    
+
     loop {
         let bytes_read = cursor.read(&mut buffer)?;
         if bytes_read == 0 {
@@ -376,13 +379,16 @@ fn run_benchmark_test() -> io::Result<()> {
         hasher.update(&buffer[..bytes_read]);
         bytes_processed += bytes_read as u64;
     }
-    
+
     let hash_result = hasher.finalize();
     let duration = start.elapsed();
-    
+
     // Convert hash to hex
-    let hash = hash_result.iter().map(|byte| format!("{:02x}", byte)).collect::<String>();
-    
+    let hash = hash_result
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>();
+
     // Calculate throughput
     let duration_secs = duration.as_secs_f64();
     let throughput_mbps = if duration_secs > 0.0 {
@@ -390,7 +396,7 @@ fn run_benchmark_test() -> io::Result<()> {
     } else {
         0.0
     };
-    
+
     // Calculate benchmark score
     // Score = (MB/s) * 10, rounded to nearest integer
     // This gives a nice scale where:
@@ -399,7 +405,7 @@ fn run_benchmark_test() -> io::Result<()> {
     // - Score of 1000 = 100 MB/s (fast)
     // - Score of 2000+ = 200+ MB/s (very fast)
     let score = (throughput_mbps * 10.0).round() as u64;
-    
+
     // Determine performance rating
     let rating = if score >= 2000 {
         "A++".bright_magenta().bold()
@@ -411,10 +417,10 @@ fn run_benchmark_test() -> io::Result<()> {
         "B".yellow()
     } else if score >= 100 {
         "C".bright_red()
-    }  else {
+    } else {
         "D".red().bold()
     };
-    
+
     // Display results
     println!("{}", "Benchmark Results:".green().bold());
     println!("═════════════════════════════════════════════════════");
@@ -431,7 +437,10 @@ fn run_benchmark_test() -> io::Result<()> {
     println!("  Throughput:     {:.2} MB/s", throughput_mbps);
     println!();
     println!("{}", "Benchmark Score:".bright_cyan().bold());
-    println!("  Score:          {} points", score.to_string().bright_white().bold());
+    println!(
+        "  Score:          {} points",
+        score.to_string().bright_white().bold()
+    );
     println!("  Rating:         {}", rating);
     println!("═════════════════════════════════════════════════════");
     Ok(())
@@ -479,7 +488,11 @@ fn process_file(
         } else {
             compute_whirlpool(&mut reader)?
         };
-        (hash_to_hex(&hash), filename.to_string(), if config.benchmark { bytes } else { file_size })
+        (
+            hash_to_hex(&hash),
+            filename.to_string(),
+            if config.benchmark { bytes } else { file_size },
+        )
     };
 
     let benchmark_info = if let Some(start) = start_time {
@@ -528,52 +541,52 @@ fn process_files_parallel(
         .map(|n| n.get())
         .unwrap_or(4)
         .min(files.len());
-    
+
     let results = Arc::new(Mutex::new(Vec::with_capacity(files.len())));
     let mut handles = vec![];
-    
+
     // Split files into chunks for each thread
     let chunk_size = (files.len() + num_threads - 1) / num_threads;
-    
+
     for chunk in files.chunks(chunk_size) {
         let chunk = chunk.to_vec();
         let config = config.clone();
         let file_counter = Arc::clone(&file_counter);
         let results = Arc::clone(&results);
-        
+
         let handle = thread::spawn(move || {
             for (idx, filename) in chunk.iter().enumerate() {
                 // Check if we've exceeded the file limit
                 if file_counter.load(Ordering::SeqCst) >= config.max_files {
                     break;
                 }
-                
+
                 let result = match process_file(filename, &config, &file_counter) {
                     Ok(r) => Ok(r),
                     Err(e) => Err((filename.clone(), e)),
                 };
-                
+
                 let mut results = results.lock().unwrap();
                 results.push((idx, result));
             }
         });
-        
+
         handles.push(handle);
     }
-    
+
     // Wait for all threads to complete
     for handle in handles {
         let _ = handle.join();
     }
-    
+
     // Sort results to maintain original file order
     let mut results = Arc::try_unwrap(results)
         .expect("Failed to unwrap results")
         .into_inner()
         .unwrap();
-    
+
     results.sort_by_key(|(idx, _)| *idx);
-    
+
     results.into_iter().map(|(_, result)| result).collect()
 }
 
@@ -945,12 +958,12 @@ fn main() -> io::Result<()> {
     }
 
     let file_counter = Arc::new(AtomicUsize::new(0));
-    
+
     // Special case: benchmark mode with no files runs a benchmark test
     if config.benchmark && files.is_empty() && !check_mode {
         return run_benchmark_test();
     }
-    
+
     let exit_code = if check_mode {
         if files.is_empty() {
             if !status_only && !quiet && config.output_format == OutputFormat::Text {
@@ -991,7 +1004,7 @@ fn main() -> io::Result<()> {
         } else {
             // Multiple files - use multithreading
             let results = process_files_parallel(&files, &config, Arc::clone(&file_counter));
-            
+
             let mut collected_results = Vec::new();
             for result in results {
                 match result {
@@ -1006,7 +1019,7 @@ fn main() -> io::Result<()> {
                     }
                 }
             }
-            
+
             // Check if we hit the file limit
             if file_counter.load(Ordering::SeqCst) >= config.max_files {
                 eprintln!(
@@ -1017,7 +1030,8 @@ fn main() -> io::Result<()> {
             }
 
             // Output structured results if needed
-            if config.output_format == OutputFormat::Json || config.output_format == OutputFormat::Yaml
+            if config.output_format == OutputFormat::Json
+                || config.output_format == OutputFormat::Yaml
             {
                 output_results_json_yaml(&collected_results, config.output_format, false);
             }
