@@ -1,9 +1,9 @@
 [package]
 name = "whirlpoolsum"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 description = "Rust version of the whirlpoolsum that prints and checks WHIRLPOOL 512-bit checksums."
-authors = ["Qwen3-Max, Qwen3-Coder, c0m4r"]
+authors = ["Qwen3-Max, Qwen3-Coder, Claude Sonnet 4.5, c0m4r"]
 license = "CC0-1.0"
 repository = "https://github.com/c0m4r/rust-whirlpoolsum"
 keywords = ["checksum", "whirlpool", "security", "integrity", "hash"]

@@ -2,21 +2,18 @@
 
 Rust version of the whirlpoolsum that prints and checks WHIRLPOOL 512-bit checksums.
 
-Vibe-coded with Qwen3-Max (Thinking @ 81,920 tokens) / Qwen3-Coder
+Vibe-coded with Qwen3-Max (Thinking @ 81,920 tokens) / Qwen3-Coder / Claude Sonnet 4.5 (Extended Thinking)
 
-## Deps (crates)
-
-* [whirlpool](https://crates.io/crates/whirlpool)
-* [colored](https://crates.io/crates/colored)
+Deps: [whirlpool](https://crates.io/crates/whirlpool) | [colored](https://crates.io/crates/colored)
 
 ## Quick install (x86_64/glibc)
 
 ```bash
-wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.5.0/whirlpoolsum
-echo "6f35abaf094c54348fa46a83be701be32c8a4046863eca784323410ca834cbe9  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
+wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.6.0/whirlpoolsum
+echo "9dcc2e84f766440dbc36d1941aa1ef975604f309cb3f41370d67ed705437ca71  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
 sudo mv whirlpoolsum /usr/local/bin/
 sudo chmod +x /usr/local/bin/whirlpoolsum
-echo "fed9865dfa9dbf5dcd300a8716817c873b4b200a0b08c60144a4aa38c68118a5027c0de53c406ccfb83c04d83fc14dd706029fe1713bdb9d5d10eaaaedb93d71  /usr/local/bin/whirlpoolsum" | whirlpoolsum -c
+echo "339d39a0a713c56b65f081f118e5d100223c7afaada93a546e20f04c2f155ed3e13bb9c9cf3d592dba00fc8af49e3dfacc1c5b0f2b114a4873980a0cfe612f02  /usr/local/bin/whirlpoolsum" | whirlpoolsum -c
 whirlpoolsum --help
 ```
 
