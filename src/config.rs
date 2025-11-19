@@ -2,8 +2,8 @@
 // Constants
 // ============================================================================
 
-/// Default maximum file size (1GB) - prevents DoS via large files
-pub const DEFAULT_MAX_FILE_SIZE: u64 = 10 * (1024 ^ 3);
+/// Default maximum file size (10GB) - prevents DoS via large files
+pub const DEFAULT_MAX_FILE_SIZE: u64 = 10 * 1024 * 1024 * 1024;
 /// Default maximum number of files - prevents DoS via many files
 pub const DEFAULT_MAX_FILES: usize = 10000;
 /// WHIRLPOOL-512 produces 64 bytes (512 bits)

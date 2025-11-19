@@ -12,12 +12,12 @@ Deps: [whirlpool](https://crates.io/crates/whirlpool) | [colored](https://crates
 ## Quick install (x86_64/glibc)
 
 ```bash
-wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.7.0/whirlpoolsum
-echo "27ea4072255ac9d9243d127d3f7daa3076c85b456cf366366ddbed60dfeb37a3  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
+wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.7.1/whirlpoolsum
+echo "886d187755d68af6f83be9c1bfc5983ba1675e4f4ad273f5c29cbd8fc159ccce  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
 sudo mv whirlpoolsum /usr/local/bin/
 sudo chmod +x /usr/local/bin/whirlpoolsum
-echo "83673d9086cadde52990f132be0de1ef27845a67ec4e0ebb5f6c596a524f3d08aecb7f5878970fca836014069d1a93649de58afd45c1c2fb23cd1e711cb05362  /usr/local/bin/whirlpoolsum" | whirlpoolsum -c
-whirlpoolsum --help
+echo "ff2f8a19646b510ab85f5a585c0074213812de665c7ecf86c45b4afd218e294a3f069fedd4127941d6b40f2f620a8d31e35717dc776fa6fc5add1c87071bfd30  /usr/local/bin/whirlpoolsum" | whirlpoolsum -c
+whirlpoolsum -V
 ```
 
 On Alpine install [gcompat](https://git.adelielinux.org/adelie/gcompat) with `apk add gcompat`
@@ -39,7 +39,7 @@ whirlpoolsum example.txt
 Multiple files checksums (with multithreading)
 
 ```bash
-whirlpoolsum --max-files 1000 /usr/sbin/*
+whirlpoolsum --max-files 100 --max-file-size 100M /usr/sbin/*
 ```
 
 Verify file checksum (stdin)
@@ -72,6 +72,13 @@ Benchmark (system test with score)
 
 ```bash
 whirlpoolsum --benchmark
+```
+
+## Configuration options
+
+```
+      --max-file-size <MAX_FILE_SIZE>  Maximum file size (e.g., 1G, 512M) [default: 10G]
+      --max-files <MAX_FILES>          Maximum number of files to process [default: 10000]
 ```
 
 ## License

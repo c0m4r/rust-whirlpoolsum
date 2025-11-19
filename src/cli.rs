@@ -31,11 +31,11 @@ pub struct Cli {
     #[arg(long = "benchmark", next_line_help = false)]
     pub benchmark: bool,
 
-    /// Maximum file size (e.g., 1G, 512M) [default: 1G]
-    #[arg(long = "max-file-size", default_value_t = String::from("1G"), next_line_help = false, hide_default_value = true)]
+    /// Maximum file size (e.g., 1G, 512M) [default: 10G]
+    #[arg(long = "max-file-size", default_value_t = String::from("10G"), next_line_help = false, hide_default_value = true)]
     pub max_file_size: String,
 
-    /// Maximum number of files to process [default: 100]
+    /// Maximum number of files to process [default: 10000]
     #[arg(long = "max-files", default_value_t = config::DEFAULT_MAX_FILES, next_line_help = false, hide_default_value = true)]
     pub max_files: usize,
 
