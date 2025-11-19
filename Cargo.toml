@@ -1,6 +1,6 @@
 [package]
 name = "whirlpoolsum"
-version = "0.7.1"
+version = "0.8.0"
 edition = "2021"
 description = "Rust version of the whirlpoolsum that prints and checks WHIRLPOOL 512-bit checksums."
 authors = ["Qwen3-Max, Qwen3-Coder, Claude Sonnet 4.5, c0m4r, Gemini 3 Pro"]
@@ -13,4 +13,4 @@ categories = ["command-line-utilities", "cryptography"]
 whirlpool = "0.10.4"
 colored = "3.0.0"
 rayon = "1.11.0"
-clap = { version = "4.5.52", features = ["derive"] }
+clap = { version = "4.5.53", features = ["derive"] }

@@ -12,15 +12,21 @@ Deps: [whirlpool](https://crates.io/crates/whirlpool) | [colored](https://crates
 ## Quick install (x86_64/glibc)
 
 ```bash
-wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.7.1/whirlpoolsum
-echo "886d187755d68af6f83be9c1bfc5983ba1675e4f4ad273f5c29cbd8fc159ccce  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
+wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.8.0/whirlpoolsum
+echo "10716a9af4936e9159d26791e33c5a248bb8be6bd2ff6a76ccd2d710dcecc412  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
 sudo mv whirlpoolsum /usr/local/bin/
 sudo chmod +x /usr/local/bin/whirlpoolsum
-echo "ff2f8a19646b510ab85f5a585c0074213812de665c7ecf86c45b4afd218e294a3f069fedd4127941d6b40f2f620a8d31e35717dc776fa6fc5add1c87071bfd30  /usr/local/bin/whirlpoolsum" | whirlpoolsum -c
+echo "03cd01ee98582bc1b5c58295a0f520e3c202e8dd53577e2cba5daf34194d5cd8d74d40b7d921bd9b2dac200e0efc8acf0ae1b0438c4b7956b39832cc87acde64  /usr/local/bin/whirlpoolsum" | whirlpoolsum -c
 whirlpoolsum -V
 ```
 
 On Alpine install [gcompat](https://git.adelielinux.org/adelie/gcompat) with `apk add gcompat`
+
+## Other platformss (ARM64, RISC-V, Windows x64)
+
+- aarch64-unknown-linux-gnu => whirlpoolsum-aarch64-glibc
+- riscv64gc-unknown-linux-gnu => whirlpoolsum-riscv64-glibc
+- x86_64-pc-windows-gnu => whirlpoolsum.exe
 
 ## Usage
 
