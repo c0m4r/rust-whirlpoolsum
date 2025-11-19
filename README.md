@@ -39,7 +39,7 @@ whirlpoolsum example.txt
 Multiple files checksums (with multithreading)
 
 ```bash
-whirlpoolsum --max-files 100 --max-file-size 100M /usr/sbin/*
+whirlpoolsum --max-files 1000 --max-file-size 100M /usr/sbin/*
 ```
 
 Verify file checksum (stdin)
@@ -77,8 +77,8 @@ whirlpoolsum --benchmark
 ## Configuration options
 
 ```
-      --max-file-size <MAX_FILE_SIZE>  Maximum file size (e.g., 1G, 512M) [default: 10G]
-      --max-files <MAX_FILES>          Maximum number of files to process [default: 10000]
+--max-file-size <MAX_FILE_SIZE>  Maximum file size (e.g., 1G, 512M) [default: 10G]
+--max-files <MAX_FILES>          Maximum number of files to process [default: 10000]
 ```
 
 ## License
