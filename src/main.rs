@@ -9,10 +9,10 @@ use std::thread;
 use std::time::Instant;
 use whirlpool::{Digest, Whirlpool};
 
-mod config;
-mod util;
-mod help;
 mod benchmark;
+mod config;
+mod help;
+mod util;
 
 // ============================================================================
 // Error Types
@@ -33,10 +33,10 @@ enum ParseError {
 // ============================================================================
 
 /// Compute WHIRLPOOL-512 hash of data from a reader
-/// 
+///
 /// # Arguments
 /// * `reader` - Any type implementing Read trait
-/// 
+///
 /// # Returns
 /// 64-byte (512-bit) hash as a fixed-size array
 fn compute_whirlpool<R: Read>(reader: &mut R) -> io::Result<[u8; config::HASH_SIZE]> {
@@ -58,9 +58,9 @@ fn compute_whirlpool<R: Read>(reader: &mut R) -> io::Result<[u8; config::HASH_SI
 }
 
 /// Compute WHIRLPOOL-512 hash while tracking the number of bytes processed
-/// 
+///
 /// Used for benchmarking to measure throughput
-/// 
+///
 /// # Arguments
 /// * `reader` - Any type implementing Read trait
 /// * `byte_count` - Mutable reference to store total bytes processed
@@ -142,7 +142,7 @@ impl VerificationStatus {
 // ============================================================================
 
 /// Escape special characters in strings for JSON output
-/// 
+///
 /// Handles: quotes, backslashes, control characters, unicode escapes
 fn escape_json_string(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + s.len() / 4);
@@ -166,7 +166,7 @@ fn escape_json_string(s: &str) -> String {
 }
 
 /// Escape special characters in strings for YAML output
-/// 
+///
 /// Uses double-quoted string format with minimal escaping
 fn escape_yaml_string(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + s.len() / 4);
@@ -189,12 +189,16 @@ fn path_to_string(path: &Path) -> String {
 }
 
 /// Output results in JSON or YAML format
-/// 
+///
 /// # Arguments
 /// * `results` - Collection of hash results to output
 /// * `format` - Desired output format
 /// * `check_mode` - Whether results are from verification (vs generation)
-fn output_results_json_yaml(results: &[HashResult], format: config::OutputFormat, check_mode: bool) {
+fn output_results_json_yaml(
+    results: &[HashResult],
+    format: config::OutputFormat,
+    check_mode: bool,
+) {
     match format {
         config::OutputFormat::Json => {
             println!("{{");
@@ -258,10 +262,10 @@ fn output_results_json_yaml(results: &[HashResult], format: config::OutputFormat
 // ============================================================================
 
 /// Process a single file and compute its WHIRLPOOL hash
-/// 
+///
 /// Handles both regular files and stdin (when filename is "-")
 /// Optionally collects benchmark metrics if enabled
-/// 
+///
 /// # Arguments
 /// * `filename` - Path to file or "-" for stdin
 /// * `config` - Configuration including benchmark flag
@@ -358,10 +362,10 @@ fn process_file(
 }
 
 /// Process multiple files in parallel using thread pool
-/// 
+///
 /// Distributes files across available CPU cores for better performance
 /// Each thread processes its chunk independently, then results are merged
-/// 
+///
 /// # Arguments
 /// * `files` - Vector of file paths to process
 /// * `config` - Configuration settings
@@ -428,13 +432,13 @@ fn process_files_parallel(
 // ============================================================================
 
 /// Parse a line from a checksum file
-/// 
+///
 /// Expected format: <128 hex chars><separator><filename>
 /// Separators: "  " (two spaces), " *" (space+asterisk), or " " (single space)
-/// 
+///
 /// # Arguments
 /// * `line` - Line from checksum file
-/// 
+///
 /// # Returns
 /// Tuple of (hash_string, filename) on success
 fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
@@ -492,17 +496,17 @@ fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
 }
 
 /// Verify checksums from a checksum file
-/// 
+///
 /// Reads a file containing hash + filename pairs and verifies each file's hash
 /// Supports various output modes: normal, status-only, quiet, with warnings
-/// 
+///
 /// # Arguments
 /// * `checksum_source` - Path to checksum file or "-" for stdin
 /// * `config` - Configuration settings
 /// * `status_only` - Only return exit code, no output
 /// * `warn` - Show warnings for malformed lines
 /// * `quiet` - Don't print OK for successful verifications
-/// 
+///
 /// # Returns
 /// Exit code: 0 for success, 1 for failures
 fn check_checksums(
@@ -514,7 +518,7 @@ fn check_checksums(
 ) -> io::Result<i32> {
     let file_counter = AtomicUsize::new(0);
     let checksum_path = Path::new(checksum_source);
-    
+
     // Open checksum file or use stdin
     let reader: Box<dyn BufRead> = if checksum_source == "-" {
         Box::new(BufReader::with_capacity(config::BUFFER_SIZE, io::stdin()))
@@ -530,7 +534,7 @@ fn check_checksums(
     let mut total = 0;
     let mut invalid_lines = 0;
     let mut results = Vec::with_capacity(256);
-    
+
     // Track if any failure occurred (for early exit in status-only mode)
     let has_failed = Arc::new(AtomicBool::new(false));
 
@@ -571,7 +575,12 @@ fn check_checksums(
                 let result = File::open(&canonical_target)
                     .and_then(|file| {
                         let metadata = file.metadata()?;
-                        util::secure_open_file(&canonical_target, config, &file_counter, Some(metadata))
+                        util::secure_open_file(
+                            &canonical_target,
+                            config,
+                            &file_counter,
+                            Some(metadata),
+                        )
                     })
                     .map_err(|e| format!("{}", e))
                     .and_then(|file| {
@@ -586,7 +595,9 @@ fn check_checksums(
                     Ok(actual_hash) => {
                         let status = if actual_hash.eq_ignore_ascii_case(expected_hash) {
                             // Hash matches - file verified successfully
-                            if !status_only && !quiet && config.output_format == config::OutputFormat::Text
+                            if !status_only
+                                && !quiet
+                                && config.output_format == config::OutputFormat::Text
                             {
                                 println!("{}: OK", filename);
                             }
@@ -682,7 +693,9 @@ fn check_checksums(
     }
 
     // Output structured results if JSON or YAML format requested
-    if config.output_format == config::OutputFormat::Json || config.output_format == config::OutputFormat::Yaml {
+    if config.output_format == config::OutputFormat::Json
+        || config.output_format == config::OutputFormat::Yaml
+    {
         output_results_json_yaml(&results, config.output_format, true);
     }
 

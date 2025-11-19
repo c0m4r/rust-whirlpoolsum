@@ -11,7 +11,7 @@ use crate::util;
 // ============================================================================
 
 /// Run a standardized benchmark test with 100MB of data
-/// 
+///
 /// Tests hashing performance and provides a scored rating
 /// Score calculation: (MB/s) * 10
 /// Ratings: A++ (2000+), A+ (1000+), A (500+), B (250+), C (100+), D (<100)

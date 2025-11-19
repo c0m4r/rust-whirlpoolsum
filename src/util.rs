@@ -10,7 +10,7 @@ use crate::config;
 // ============================================================================
 
 /// Parse human-readable size strings (e.g., "512M", "2G")
-/// 
+///
 /// Supports suffixes: B, KB, MB, GB, TB (case-insensitive)
 /// Examples: "1024", "512M", "2.5G"
 pub fn parse_size(size_str: &str) -> io::Result<u64> {
@@ -72,7 +72,7 @@ pub fn parse_size(size_str: &str) -> io::Result<u64> {
 }
 
 /// Canonicalize paths, resolving symlinks and normalizing
-/// 
+///
 /// Special handling for "-" (stdin) which is returned as-is
 pub fn safe_canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
     let path = path.as_ref();
@@ -92,15 +92,17 @@ pub fn safe_canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
 }
 
 /// Convert binary hash to hexadecimal string representation
-/// 
+///
 /// Pre-allocates string with exact required capacity for efficiency
 pub fn hash_to_hex(hash: &[u8]) -> String {
-    hash.iter()
-        .fold(String::with_capacity(config::HASH_HEX_SIZE), |mut acc, byte| {
+    hash.iter().fold(
+        String::with_capacity(config::HASH_HEX_SIZE),
+        |mut acc, byte| {
             use std::fmt::Write;
             let _ = write!(acc, "{:02x}", byte);
             acc
-        })
+        },
+    )
 }
 
 // ============================================================================
@@ -108,12 +110,12 @@ pub fn hash_to_hex(hash: &[u8]) -> String {
 // ============================================================================
 
 /// Secure file opening with size validation and resource limits
-/// 
+///
 /// Enforces:
 /// - Maximum file count to prevent DoS
 /// - Maximum file size to prevent memory exhaustion
 /// - Rejects directories
-/// 
+///
 /// # Arguments
 /// * `path` - Path to the file to open
 /// * `config` - Configuration with security limits
