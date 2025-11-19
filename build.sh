@@ -8,3 +8,4 @@ cargo clippy
 cargo build
 cargo build --release
 ./test.sh
+cargo test
