@@ -1,6 +1,6 @@
+use crate::config;
 use clap::Parser;
 use std::path::PathBuf;
-use crate::config;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -65,7 +65,7 @@ impl Cli {
 
     pub fn to_config(&self) -> io::Result<config::Config> {
         let max_file_size = crate::util::parse_size(&self.max_file_size)?;
-        
+
         Ok(config::Config {
             max_file_size,
             max_files: self.max_files,

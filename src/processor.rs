@@ -202,7 +202,8 @@ pub fn print_text_result(result: &HashResult) {
 }
 
 /// Type alias for the result sender to reduce complexity
-pub type ProcessResultSender = std::sync::mpsc::Sender<(usize, Result<HashResult, (PathBuf, io::Error)>)>;
+pub type ProcessResultSender =
+    std::sync::mpsc::Sender<(usize, Result<HashResult, (PathBuf, io::Error)>)>;
 
 /// Process multiple files in parallel using rayon
 pub fn process_files_parallel(
@@ -211,23 +212,20 @@ pub fn process_files_parallel(
     file_counter: Arc<AtomicUsize>,
     tx: ProcessResultSender,
 ) {
-    files
-        .par_iter()
-        .enumerate()
-        .for_each(|(index, filename)| {
-            // Check if file limit reached
-            if file_counter.load(Ordering::Relaxed) >= config.max_files {
-                // We can't easily break from par_iter, but we can skip processing
-                // secure_open_file handles the check too, but let's be safe
-            }
+    files.par_iter().enumerate().for_each(|(index, filename)| {
+        // Check if file limit reached
+        if file_counter.load(Ordering::Relaxed) >= config.max_files {
+            // We can't easily break from par_iter, but we can skip processing
+            // secure_open_file handles the check too, but let's be safe
+        }
 
-            let result = match process_file(filename, config, &file_counter) {
-                Ok(r) => Ok(r),
-                Err(e) => Err((filename.clone(), e)),
-            };
-            
-            let _ = tx.send((index, result));
-        });
+        let result = match process_file(filename, config, &file_counter) {
+            Ok(r) => Ok(r),
+            Err(e) => Err((filename.clone(), e)),
+        };
+
+        let _ = tx.send((index, result));
+    });
 }
 
 // ============================================================================

@@ -149,7 +149,7 @@ pub fn check_checksums(
                 // But secure_open_file expects a path.
                 // In original code: util::safe_canonicalize(target_path)?
                 // We should probably keep that behavior.
-                
+
                 let canonical_target_result = util::safe_canonicalize(target_path);
 
                 match canonical_target_result {
@@ -167,7 +167,8 @@ pub fn check_checksums(
                             })
                             .map_err(|e| format!("{}", e))
                             .and_then(|file| {
-                                let mut reader = BufReader::with_capacity(config::BUFFER_SIZE, file);
+                                let mut reader =
+                                    BufReader::with_capacity(config::BUFFER_SIZE, file);
                                 processor::compute_whirlpool(&mut reader)
                                     .map(|hash| util::hash_to_hex(&hash))
                                     .map_err(|e| format!("hash computation failed: {}", e))
@@ -189,7 +190,9 @@ pub fn check_checksums(
                                     // Hash mismatch - verification failed
                                     failed += 1;
                                     has_failed.store(true, Ordering::Relaxed);
-                                    if !status_only && config.output_format == config::OutputFormat::Text {
+                                    if !status_only
+                                        && config.output_format == config::OutputFormat::Text
+                                    {
                                         eprintln!("{}: FAILED", filename);
                                         eprintln!(
                                             "whirlpoolsum: {}: line {}: computed hash: {}",
@@ -213,7 +216,9 @@ pub fn check_checksums(
                                 // Could not open or read file
                                 failed += 1;
                                 has_failed.store(true, Ordering::Relaxed);
-                                if !status_only && config.output_format == config::OutputFormat::Text {
+                                if !status_only
+                                    && config.output_format == config::OutputFormat::Text
+                                {
                                     eprintln!("{}: FAILED open or read - {}", filename, err);
                                 }
                                 results.push(HashResult {
@@ -224,13 +229,13 @@ pub fn check_checksums(
                                 });
                             }
                         }
-                    },
+                    }
                     Err(e) => {
-                         // Could not canonicalize (e.g. file not found)
+                        // Could not canonicalize (e.g. file not found)
                         failed += 1;
                         has_failed.store(true, Ordering::Relaxed);
                         if !status_only && config.output_format == config::OutputFormat::Text {
-                             eprintln!("{}: FAILED open or read - {}", filename, e);
+                            eprintln!("{}: FAILED open or read - {}", filename, e);
                         }
                         results.push(HashResult {
                             filename: PathBuf::from(filename),

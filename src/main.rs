@@ -191,7 +191,11 @@ fn main() {
 
             // Output structured results if needed
             if config.output_format != config::OutputFormat::Text {
-                processor::output_results_json_yaml(&collected_results, config.output_format, false);
+                processor::output_results_json_yaml(
+                    &collected_results,
+                    config.output_format,
+                    false,
+                );
             }
         }
 
