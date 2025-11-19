@@ -63,33 +63,17 @@ impl VerificationStatus {
 // Cryptographic Hash Functions
 // ============================================================================
 
-/// Compute WHIRLPOOL-512 hash of data from a reader
-pub fn compute_whirlpool<R: Read>(reader: &mut R) -> io::Result<[u8; config::HASH_SIZE]> {
-    let mut hasher = Whirlpool::new();
-    let mut buffer = [0u8; config::BUFFER_SIZE];
-
-    loop {
-        let bytes_read = reader.read(&mut buffer)?;
-        if bytes_read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..bytes_read]);
-    }
-
-    let hash_result = hasher.finalize();
-    let mut hash_bytes = [0u8; config::HASH_SIZE];
-    hash_bytes.copy_from_slice(&hash_result);
-    Ok(hash_bytes)
-}
-
-/// Compute WHIRLPOOL-512 hash while tracking the number of bytes processed
-pub fn compute_whirlpool_with_count<R: Read>(
+/// Compute WHIRLPOOL-512 hash of data from a reader, optionally tracking byte count
+pub fn compute_whirlpool<R: Read>(
     reader: &mut R,
-    byte_count: &mut u64,
+    mut byte_count: Option<&mut u64>,
 ) -> io::Result<[u8; config::HASH_SIZE]> {
     let mut hasher = Whirlpool::new();
     let mut buffer = [0u8; config::BUFFER_SIZE];
-    *byte_count = 0;
+
+    if let Some(count) = byte_count.as_deref_mut() {
+        *count = 0;
+    }
 
     loop {
         let bytes_read = reader.read(&mut buffer)?;
@@ -97,7 +81,9 @@ pub fn compute_whirlpool_with_count<R: Read>(
             break;
         }
         hasher.update(&buffer[..bytes_read]);
-        *byte_count += bytes_read as u64;
+        if let Some(count) = byte_count.as_deref_mut() {
+            *count += bytes_read as u64;
+        }
     }
 
     let hash_result = hasher.finalize();
@@ -129,9 +115,9 @@ pub fn process_file(
         let mut reader = BufReader::with_capacity(config::BUFFER_SIZE, stdin.lock());
         let mut bytes = 0u64;
         let hash = if config.benchmark {
-            compute_whirlpool_with_count(&mut reader, &mut bytes)?
+            compute_whirlpool(&mut reader, Some(&mut bytes))?
         } else {
-            compute_whirlpool(&mut reader)?
+            compute_whirlpool(&mut reader, None)?
         };
         (util::hash_to_hex(&hash), PathBuf::from("-"), bytes)
     } else {
@@ -151,9 +137,9 @@ pub fn process_file(
         let mut reader = BufReader::with_capacity(config::BUFFER_SIZE, file);
         let mut bytes = 0u64;
         let hash = if config.benchmark {
-            compute_whirlpool_with_count(&mut reader, &mut bytes)?
+            compute_whirlpool(&mut reader, Some(&mut bytes))?
         } else {
-            compute_whirlpool(&mut reader)?
+            compute_whirlpool(&mut reader, None)?
         };
         (
             util::hash_to_hex(&hash),
@@ -233,7 +219,10 @@ pub fn process_files_parallel(
 // ============================================================================
 
 /// Escape special characters in strings for JSON output
-fn escape_json_string(s: &str) -> String {
+/// Escape special characters in strings for JSON/YAML output
+///
+/// Handles standard escapes and control characters
+fn escape_string(s: &str, is_json: bool) -> String {
     let mut result = String::with_capacity(s.len() + s.len() / 4);
     for c in s.chars() {
         match c {
@@ -242,28 +231,12 @@ fn escape_json_string(s: &str) -> String {
             '\n' => result.push_str("\\n"),
             '\r' => result.push_str("\\r"),
             '\t' => result.push_str("\\t"),
-            '\x08' => result.push_str("\\b"),
-            '\x0C' => result.push_str("\\f"),
-            c if c.is_control() => {
+            '\x08' if is_json => result.push_str("\\b"),
+            '\x0C' if is_json => result.push_str("\\f"),
+            c if is_json && c.is_control() => {
                 use std::fmt::Write;
                 let _ = write!(result, "\\u{:04x}", c as u32);
             }
-            c => result.push(c),
-        }
-    }
-    result
-}
-
-/// Escape special characters in strings for YAML output
-fn escape_yaml_string(s: &str) -> String {
-    let mut result = String::with_capacity(s.len() + s.len() / 4);
-    for c in s.chars() {
-        match c {
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
             c => result.push(c),
         }
     }
@@ -292,7 +265,7 @@ pub fn output_results_json_yaml(
             for (i, res) in results.iter().enumerate() {
                 print!(
                     "    {{\"filename\": \"{}\", \"hash\": \"{}\"",
-                    escape_json_string(&path_to_string(&res.filename)),
+                    escape_string(&path_to_string(&res.filename), true),
                     res.hash
                 );
                 if let Some(status) = &res.status {
@@ -322,7 +295,7 @@ pub fn output_results_json_yaml(
             for res in results {
                 println!(
                     "  - filename: \"{}\"",
-                    escape_yaml_string(&path_to_string(&res.filename))
+                    escape_string(&path_to_string(&res.filename), false)
                 );
                 println!("    hash: \"{}\"", res.hash);
                 if let Some(status) = &res.status {

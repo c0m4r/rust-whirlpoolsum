@@ -169,7 +169,7 @@ pub fn check_checksums(
                             .and_then(|file| {
                                 let mut reader =
                                     BufReader::with_capacity(config::BUFFER_SIZE, file);
-                                processor::compute_whirlpool(&mut reader)
+                                processor::compute_whirlpool(&mut reader, None)
                                     .map(|hash| util::hash_to_hex(&hash))
                                     .map_err(|e| format!("hash computation failed: {}", e))
                             });

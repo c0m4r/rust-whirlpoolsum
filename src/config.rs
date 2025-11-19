@@ -2,16 +2,18 @@
 // Constants
 // ============================================================================
 
+use crate::util::evaluate_rpn_str;
+
 /// Default maximum file size (10GB) - prevents DoS via large files
-pub const DEFAULT_MAX_FILE_SIZE: u64 = 10 * 1024 * 1024 * 1024;
+pub const DEFAULT_MAX_FILE_SIZE: u64 = evaluate_rpn_str("10 1024 * 1024 * 1024 *");
 /// Default maximum number of files - prevents DoS via many files
 pub const DEFAULT_MAX_FILES: usize = 10000;
 /// WHIRLPOOL-512 produces 64 bytes (512 bits)
 pub const HASH_SIZE: usize = 64;
 /// Hash in hexadecimal format is 128 characters
-pub const HASH_HEX_SIZE: usize = HASH_SIZE * 2;
+pub const HASH_HEX_SIZE: usize = evaluate_rpn_str("64 2 *") as usize;
 /// Size of data used for benchmark testing (100MB)
-pub const BENCHMARK_FILE_SIZE: usize = 100 * 1024 * 1024;
+pub const BENCHMARK_FILE_SIZE: usize = evaluate_rpn_str("100 1024 * 1024 *") as usize;
 /// Optimal buffer size for I/O operations (64KB)
 pub const BUFFER_SIZE: usize = 65536;
 /// Standard separator: two spaces

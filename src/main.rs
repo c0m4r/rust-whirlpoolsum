@@ -3,12 +3,7 @@ use std::process;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-mod benchmark;
-mod cli;
-mod config;
-mod processor;
-mod util;
-mod verifier;
+use whirlpoolsum::{benchmark, cli, config, processor, verifier};
 
 fn main() {
     // Check for help flag before parsing to print custom header
