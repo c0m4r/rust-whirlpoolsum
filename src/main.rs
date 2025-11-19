@@ -1,13 +1,18 @@
 use colored::Colorize;
+use std::ffi::OsString;
 use std::fs::{canonicalize, File, Metadata};
 use std::io::{self, BufRead, BufReader, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 use whirlpool::{Digest, Whirlpool};
+
+// ============================================================================
+// Error Types
+// ============================================================================
 
 /// Detailed errors for checksum line parsing
 #[derive(Debug)]
@@ -19,22 +24,45 @@ enum ParseError {
     NonHexCharacters(String),
 }
 
-const DEFAULT_MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
+// ============================================================================
+// Constants
+// ============================================================================
+
+/// Default maximum file size (1GB) - prevents DoS via large files
+const DEFAULT_MAX_FILE_SIZE: u64 = 1024 * 1024 * 1024;
+/// Default maximum number of files - prevents DoS via many files
 const DEFAULT_MAX_FILES: usize = 100;
-const HASH_SIZE: usize = 64; // 512 bits = 64 bytes
-const HASH_HEX_SIZE: usize = HASH_SIZE * 2; // 128 hex characters
-const BENCHMARK_FILE_SIZE: usize = 100 * 1024 * 1024; // 100MB
-const BUFFER_SIZE: usize = 65536; // 64KB optimal for most systems
+/// WHIRLPOOL-512 produces 64 bytes (512 bits)
+const HASH_SIZE: usize = 64;
+/// Hash in hexadecimal format is 128 characters
+const HASH_HEX_SIZE: usize = HASH_SIZE * 2;
+/// Size of data used for benchmark testing (100MB)
+const BENCHMARK_FILE_SIZE: usize = 100 * 1024 * 1024;
+/// Optimal buffer size for I/O operations (64KB)
+const BUFFER_SIZE: usize = 65536;
+/// Standard separator: two spaces
+const HASH_SEPARATOR_DOUBLE: &str = "  ";
+/// BSD-style separator: space followed by asterisk
+const HASH_SEPARATOR_ASTERISK: &str = " *";
+
+// ============================================================================
+// Configuration Structures
+// ============================================================================
 
 /// Configuration settings for security and resource limits
 #[derive(Clone)]
 struct Config {
+    /// Maximum allowed size for individual files
     max_file_size: u64,
+    /// Maximum number of files to process
     max_files: usize,
+    /// Output format (text, JSON, or YAML)
     output_format: OutputFormat,
+    /// Whether to show performance benchmarks
     benchmark: bool,
 }
 
+/// Available output formats for results
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum OutputFormat {
     Text,
@@ -53,7 +81,14 @@ impl Default for Config {
     }
 }
 
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
 /// Parse human-readable size strings (e.g., "512M", "2G")
+/// 
+/// Supports suffixes: B, KB, MB, GB, TB (case-insensitive)
+/// Examples: "1024", "512M", "2.5G"
 fn parse_size(size_str: &str) -> io::Result<u64> {
     let size_str = size_str.trim();
     if size_str.is_empty() {
@@ -63,6 +98,7 @@ fn parse_size(size_str: &str) -> io::Result<u64> {
         ));
     }
 
+    // Split into numeric part and suffix
     let (num_str, suffix) =
         if let Some(pos) = size_str.find(|c: char| !c.is_ascii_digit() && c != '.') {
             (&size_str[..pos], &size_str[pos..])
@@ -70,6 +106,7 @@ fn parse_size(size_str: &str) -> io::Result<u64> {
             (size_str, "")
         };
 
+    // Parse the numeric value
     let num: f64 = num_str.parse().map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -84,6 +121,7 @@ fn parse_size(size_str: &str) -> io::Result<u64> {
         ));
     }
 
+    // Determine multiplier based on suffix
     let multiplier = match suffix.to_lowercase().as_str() {
         "" | "b" => 1.0,
         "k" | "kb" => 1024.0,
@@ -109,14 +147,18 @@ fn parse_size(size_str: &str) -> io::Result<u64> {
     Ok(size as u64)
 }
 
-/// Canonicalize paths
+/// Canonicalize paths, resolving symlinks and normalizing
+/// 
+/// Special handling for "-" (stdin) which is returned as-is
 fn safe_canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
     let path = path.as_ref();
 
+    // Skip canonicalization for standard input
     if path == Path::new("-") {
         return Ok(PathBuf::from("-"));
     }
 
+    // Resolve symlinks and normalize path
     canonicalize(path).map_err(|e| {
         io::Error::new(
             e.kind(),
@@ -125,7 +167,22 @@ fn safe_canonicalize<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
     })
 }
 
-/// Secure file opening with size validation
+// ============================================================================
+// File Security and Validation
+// ============================================================================
+
+/// Secure file opening with size validation and resource limits
+/// 
+/// Enforces:
+/// - Maximum file count to prevent DoS
+/// - Maximum file size to prevent memory exhaustion
+/// - Rejects directories
+/// 
+/// # Arguments
+/// * `path` - Path to the file to open
+/// * `config` - Configuration with security limits
+/// * `file_counter` - Atomic counter to track number of opened files
+/// * `metadata` - Optional pre-fetched metadata (avoids double stat)
 fn secure_open_file<P: AsRef<Path>>(
     path: P,
     config: &Config,
@@ -134,6 +191,7 @@ fn secure_open_file<P: AsRef<Path>>(
 ) -> io::Result<File> {
     let path = path.as_ref();
 
+    // Check if we've exceeded the maximum file limit
     let current_count = file_counter.fetch_add(1, Ordering::Relaxed);
     if current_count >= config.max_files {
         return Err(io::Error::other(format!(
@@ -142,6 +200,7 @@ fn secure_open_file<P: AsRef<Path>>(
         )));
     }
 
+    // Get or use provided metadata
     let metadata = match metadata {
         Some(meta) => meta,
         None => path.metadata().map_err(|e| {
@@ -152,6 +211,7 @@ fn secure_open_file<P: AsRef<Path>>(
         })?,
     };
 
+    // Reject directories
     if metadata.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -159,6 +219,7 @@ fn secure_open_file<P: AsRef<Path>>(
         ));
     }
 
+    // Validate file size against configured maximum
     let file_size = metadata.len();
     if file_size > config.max_file_size {
         return Err(io::Error::new(
@@ -171,6 +232,7 @@ fn secure_open_file<P: AsRef<Path>>(
         ));
     }
 
+    // Open the file
     File::open(path).map_err(|e| {
         io::Error::new(
             e.kind(),
@@ -179,6 +241,17 @@ fn secure_open_file<P: AsRef<Path>>(
     })
 }
 
+// ============================================================================
+// Cryptographic Hash Functions
+// ============================================================================
+
+/// Compute WHIRLPOOL-512 hash of data from a reader
+/// 
+/// # Arguments
+/// * `reader` - Any type implementing Read trait
+/// 
+/// # Returns
+/// 64-byte (512-bit) hash as a fixed-size array
 fn compute_whirlpool<R: Read>(reader: &mut R) -> io::Result<[u8; HASH_SIZE]> {
     let mut hasher = Whirlpool::new();
     let mut buffer = [0u8; BUFFER_SIZE];
@@ -197,6 +270,13 @@ fn compute_whirlpool<R: Read>(reader: &mut R) -> io::Result<[u8; HASH_SIZE]> {
     Ok(hash_bytes)
 }
 
+/// Compute WHIRLPOOL-512 hash while tracking the number of bytes processed
+/// 
+/// Used for benchmarking to measure throughput
+/// 
+/// # Arguments
+/// * `reader` - Any type implementing Read trait
+/// * `byte_count` - Mutable reference to store total bytes processed
 fn compute_whirlpool_with_count<R: Read>(
     reader: &mut R,
     byte_count: &mut u64,
@@ -220,6 +300,9 @@ fn compute_whirlpool_with_count<R: Read>(
     Ok(hash_bytes)
 }
 
+/// Convert binary hash to hexadecimal string representation
+/// 
+/// Pre-allocates string with exact required capacity for efficiency
 fn hash_to_hex(hash: &[u8]) -> String {
     hash.iter()
         .fold(String::with_capacity(HASH_HEX_SIZE), |mut acc, byte| {
@@ -229,29 +312,47 @@ fn hash_to_hex(hash: &[u8]) -> String {
         })
 }
 
+// ============================================================================
+// Result Structures
+// ============================================================================
+
+/// Result of hashing or verifying a single file
 #[derive(Debug, Clone)]
 struct HashResult {
-    filename: String,
+    /// Path to the file (or "-" for stdin)
+    filename: PathBuf,
+    /// Hexadecimal hash string
     hash: String,
+    /// Verification status (only for check mode)
     status: Option<VerificationStatus>,
+    /// Benchmark information (only when benchmarking)
     benchmark_info: Option<BenchmarkInfo>,
 }
 
+/// Performance metrics for benchmark mode
 #[derive(Debug, Clone)]
 struct BenchmarkInfo {
+    /// Total bytes processed
     bytes_processed: u64,
+    /// Time taken in milliseconds
     duration_ms: u64,
+    /// Throughput in megabytes per second
     throughput_mbps: f64,
 }
 
+/// Status of checksum verification
 #[derive(Debug, Clone)]
 enum VerificationStatus {
+    /// Hash matched expected value
     Ok,
+    /// Hash did not match
     Failed,
+    /// Could not open or read the file
     FailedOpenRead,
 }
 
 impl VerificationStatus {
+    /// Convert status to string representation
     fn as_str(&self) -> &'static str {
         match self {
             VerificationStatus::Ok => "OK",
@@ -261,6 +362,13 @@ impl VerificationStatus {
     }
 }
 
+// ============================================================================
+// Output Formatting Functions
+// ============================================================================
+
+/// Escape special characters in strings for JSON output
+/// 
+/// Handles: quotes, backslashes, control characters, unicode escapes
 fn escape_json_string(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + s.len() / 4);
     for c in s.chars() {
@@ -282,6 +390,9 @@ fn escape_json_string(s: &str) -> String {
     result
 }
 
+/// Escape special characters in strings for YAML output
+/// 
+/// Uses double-quoted string format with minimal escaping
 fn escape_yaml_string(s: &str) -> String {
     let mut result = String::with_capacity(s.len() + s.len() / 4);
     for c in s.chars() {
@@ -297,6 +408,17 @@ fn escape_yaml_string(s: &str) -> String {
     result
 }
 
+/// Convert PathBuf to String, handling non-UTF8 paths gracefully
+fn path_to_string(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+/// Output results in JSON or YAML format
+/// 
+/// # Arguments
+/// * `results` - Collection of hash results to output
+/// * `format` - Desired output format
+/// * `check_mode` - Whether results are from verification (vs generation)
 fn output_results_json_yaml(results: &[HashResult], format: OutputFormat, check_mode: bool) {
     match format {
         OutputFormat::Json => {
@@ -309,7 +431,7 @@ fn output_results_json_yaml(results: &[HashResult], format: OutputFormat, check_
             for (i, res) in results.iter().enumerate() {
                 print!(
                     "    {{\"filename\": \"{}\", \"hash\": \"{}\"",
-                    escape_json_string(&res.filename),
+                    escape_json_string(&path_to_string(&res.filename)),
                     res.hash
                 );
                 if let Some(status) = &res.status {
@@ -337,7 +459,10 @@ fn output_results_json_yaml(results: &[HashResult], format: OutputFormat, check_
                 println!("hash_results:");
             }
             for res in results {
-                println!("  - filename: \"{}\"", escape_yaml_string(&res.filename));
+                println!(
+                    "  - filename: \"{}\"",
+                    escape_yaml_string(&path_to_string(&res.filename))
+                );
                 println!("    hash: \"{}\"", res.hash);
                 if let Some(status) = &res.status {
                     println!("    status: \"{}\"", status.as_str());
@@ -353,16 +478,27 @@ fn output_results_json_yaml(results: &[HashResult], format: OutputFormat, check_
     }
 }
 
+// ============================================================================
+// Benchmark Test Function
+// ============================================================================
+
+/// Run a standardized benchmark test with 100MB of data
+/// 
+/// Tests hashing performance and provides a scored rating
+/// Score calculation: (MB/s) * 10
+/// Ratings: A++ (2000+), A+ (1000+), A (500+), B (250+), C (100+), D (<100)
 fn run_benchmark_test() -> io::Result<()> {
     println!("{}", "=== WHIRLPOOL Benchmark Test ===".green().bold());
     println!("Generating 100 MB of random data...\n");
 
+    // Generate test data (pattern 0xA5 for repeatability)
     let data = vec![0xA5u8; BENCHMARK_FILE_SIZE];
     let mut cursor = Cursor::new(&data);
 
     println!("Starting benchmark...\n");
     let start = Instant::now();
 
+    // Perform hash computation
     let mut hasher = Whirlpool::new();
     let mut buffer = [0u8; BUFFER_SIZE];
     let mut bytes_processed = 0u64;
@@ -379,8 +515,7 @@ fn run_benchmark_test() -> io::Result<()> {
     let hash_result = hasher.finalize();
     let duration = start.elapsed();
 
-    let hash = hash_to_hex(hash_result.as_slice());
-
+    // Calculate performance metrics
     let duration_secs = duration.as_secs_f64();
     let throughput_mbps = if duration_secs > 0.0 {
         (bytes_processed as f64 / 1_048_576.0) / duration_secs
@@ -388,8 +523,10 @@ fn run_benchmark_test() -> io::Result<()> {
         0.0
     };
 
+    // Calculate benchmark score (MB/s * 10)
     let score = (throughput_mbps * 10.0).round() as u64;
 
+    // Determine performance rating
     let rating = if score >= 2000 {
         "A++".bright_magenta().bold()
     } else if score >= 1000 {
@@ -404,10 +541,14 @@ fn run_benchmark_test() -> io::Result<()> {
         "D".red().bold()
     };
 
+    // Display results
     println!("{}", "Benchmark Results:".green().bold());
     println!("═════════════════════════════════════════════════════");
     println!("Data size:        {} bytes (100 MB)", bytes_processed);
-    println!("Hash:             {}", hash.bright_black());
+    println!(
+        "Hash:             {}",
+        hash_to_hex(hash_result.as_slice()).bright_black()
+    );
     println!();
     println!("{}", "Timing:".yellow().bold());
     println!("  Seconds:        {:.9} s", duration.as_secs_f64());
@@ -428,18 +569,33 @@ fn run_benchmark_test() -> io::Result<()> {
     Ok(())
 }
 
+// ============================================================================
+// File Processing Functions
+// ============================================================================
+
+/// Process a single file and compute its WHIRLPOOL hash
+/// 
+/// Handles both regular files and stdin (when filename is "-")
+/// Optionally collects benchmark metrics if enabled
+/// 
+/// # Arguments
+/// * `filename` - Path to file or "-" for stdin
+/// * `config` - Configuration including benchmark flag
+/// * `file_counter` - Atomic counter for resource tracking
 fn process_file(
-    filename: &str,
+    filename: &OsString,
     config: &Config,
     file_counter: &AtomicUsize,
 ) -> io::Result<HashResult> {
+    // Start timing if benchmarking is enabled
     let start_time = if config.benchmark {
         Some(Instant::now())
     } else {
         None
     };
 
-    let (hash, display_filename, bytes_processed) = if filename == "-" {
+    // Process stdin or regular file
+    let (hash, display_path, bytes_processed) = if filename == "-" {
         let stdin = io::stdin();
         let mut reader = BufReader::with_capacity(BUFFER_SIZE, stdin.lock());
         let mut bytes = 0u64;
@@ -448,11 +604,12 @@ fn process_file(
         } else {
             compute_whirlpool(&mut reader)?
         };
-        (hash_to_hex(&hash), "-".to_string(), bytes)
+        (hash_to_hex(&hash), PathBuf::from("-"), bytes)
     } else {
         let path = Path::new(filename);
         let canonical_path = safe_canonicalize(path)?;
 
+        // Get file metadata for security checks
         let metadata = canonical_path.metadata().map_err(|e| {
             io::Error::new(
                 e.kind(),
@@ -472,11 +629,12 @@ fn process_file(
         };
         (
             hash_to_hex(&hash),
-            filename.to_string(),
+            PathBuf::from(filename),
             if config.benchmark { bytes } else { file_size },
         )
     };
 
+    // Calculate benchmark metrics if enabled
     let benchmark_info = if let Some(start) = start_time {
         let duration = start.elapsed();
         let duration_ms = duration.as_millis() as u64;
@@ -495,14 +653,15 @@ fn process_file(
     };
 
     let result = HashResult {
-        filename: display_filename.clone(),
+        filename: display_path.clone(),
         hash: hash.clone(),
         status: None,
         benchmark_info: benchmark_info.clone(),
     };
 
+    // Output result in text format
     if config.output_format == OutputFormat::Text {
-        println!("{}  {}", hash, display_filename);
+        println!("{}  {}", hash, display_path.display());
         if let Some(bench) = &benchmark_info {
             eprintln!(
                 "  Benchmark: {} bytes in {} ms ({:.2} MB/s)",
@@ -514,31 +673,42 @@ fn process_file(
     Ok(result)
 }
 
+/// Process multiple files in parallel using thread pool
+/// 
+/// Distributes files across available CPU cores for better performance
+/// Each thread processes its chunk independently, then results are merged
+/// 
+/// # Arguments
+/// * `files` - Vector of file paths to process
+/// * `config` - Configuration settings
+/// * `file_counter` - Shared atomic counter for resource limits
 fn process_files_parallel(
-    files: &[String],
+    files: &[OsString],
     config: &Config,
     file_counter: Arc<AtomicUsize>,
-) -> Vec<Result<HashResult, (String, io::Error)>> {
+) -> Vec<Result<HashResult, (OsString, io::Error)>> {
+    // Determine optimal thread count
     let num_threads = thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
         .min(files.len())
         .max(1);
 
-    let results = Arc::new(Mutex::new(Vec::with_capacity(files.len())));
     let mut handles = vec![];
-
     let chunk_size = files.len().div_ceil(num_threads);
 
+    // Spawn threads for each chunk of files
     for (chunk_idx, chunk) in files.chunks(chunk_size).enumerate() {
         let chunk = chunk.to_vec();
         let config = config.clone();
         let file_counter = Arc::clone(&file_counter);
-        let results = Arc::clone(&results);
         let base_idx = chunk_idx * chunk_size;
 
         let handle = thread::spawn(move || {
+            // Process files in this thread, collecting results locally
+            let mut local_results = Vec::with_capacity(chunk.len());
             for (idx, filename) in chunk.iter().enumerate() {
+                // Check if file limit reached
                 if file_counter.load(Ordering::Relaxed) >= config.max_files {
                     break;
                 }
@@ -548,45 +718,63 @@ fn process_files_parallel(
                     Err(e) => Err((filename.clone(), e)),
                 };
 
-                let mut results = results.lock().unwrap();
-                results.push((base_idx + idx, result));
+                local_results.push((base_idx + idx, result));
             }
+            local_results
         });
 
         handles.push(handle);
     }
 
+    // Collect results from all threads
+    let mut all_results = Vec::with_capacity(files.len());
     for handle in handles {
-        let _ = handle.join();
+        if let Ok(local_results) = handle.join() {
+            all_results.extend(local_results);
+        }
     }
 
-    let mut results = Arc::try_unwrap(results)
-        .expect("Failed to unwrap results")
-        .into_inner()
-        .unwrap();
-
-    results.sort_by_key(|(idx, _)| *idx);
-
-    results.into_iter().map(|(_, result)| result).collect()
+    // Sort by original file order
+    all_results.sort_by_key(|(idx, _)| *idx);
+    all_results.into_iter().map(|(_, result)| result).collect()
 }
 
+// ============================================================================
+// Checksum Verification Functions
+// ============================================================================
+
+/// Parse a line from a checksum file
+/// 
+/// Expected format: <128 hex chars><separator><filename>
+/// Separators: "  " (two spaces), " *" (space+asterisk), or " " (single space)
+/// 
+/// # Arguments
+/// * `line` - Line from checksum file
+/// 
+/// # Returns
+/// Tuple of (hash_string, filename) on success
 fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
     let line = line.trim();
 
+    // Skip empty lines and comments
     if line.is_empty() || line.starts_with('#') {
         return Err(ParseError::EmptyOrComment);
     }
 
+    // Check minimum length (hash + separator + at least 1 char filename)
     if line.len() < HASH_HEX_SIZE + 1 {
         return Err(ParseError::TooShort(line.len()));
     }
 
+    // Extract hash and remainder
     let (hash_part, rest) = line.split_at(HASH_HEX_SIZE);
 
+    // Validate hash length
     if hash_part.len() != HASH_HEX_SIZE {
         return Err(ParseError::InvalidHashLength(hash_part.len()));
     }
 
+    // Validate hash contains only hexadecimal characters
     if let Some(non_hex) = hash_part.chars().find(|&c| !c.is_ascii_hexdigit()) {
         return Err(ParseError::NonHexCharacters(format!(
             "character '{}' at position {}",
@@ -595,13 +783,15 @@ fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
         )));
     }
 
+    // Check for remainder
     if rest.is_empty() {
         return Err(ParseError::TooShort(line.len()));
     }
 
-    let filename = if let Some(stripped) = rest.strip_prefix("  ") {
+    // Parse separator and extract filename
+    let filename = if let Some(stripped) = rest.strip_prefix(HASH_SEPARATOR_DOUBLE) {
         stripped.trim_start()
-    } else if let Some(stripped) = rest.strip_prefix(" *") {
+    } else if let Some(stripped) = rest.strip_prefix(HASH_SEPARATOR_ASTERISK) {
         stripped.trim_start()
     } else if let Some(stripped) = rest.strip_prefix(' ') {
         stripped.trim_start()
@@ -609,6 +799,7 @@ fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
         return Err(ParseError::InvalidSeparator(rest.chars().take(2).collect()));
     };
 
+    // Validate filename is not empty
     if filename.is_empty() {
         return Err(ParseError::TooShort(line.len()));
     }
@@ -616,6 +807,20 @@ fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
     Ok((hash_part, filename))
 }
 
+/// Verify checksums from a checksum file
+/// 
+/// Reads a file containing hash + filename pairs and verifies each file's hash
+/// Supports various output modes: normal, status-only, quiet, with warnings
+/// 
+/// # Arguments
+/// * `checksum_source` - Path to checksum file or "-" for stdin
+/// * `config` - Configuration settings
+/// * `status_only` - Only return exit code, no output
+/// * `warn` - Show warnings for malformed lines
+/// * `quiet` - Don't print OK for successful verifications
+/// 
+/// # Returns
+/// Exit code: 0 for success, 1 for failures
 fn check_checksums(
     checksum_source: &str,
     config: &Config,
@@ -625,6 +830,8 @@ fn check_checksums(
 ) -> io::Result<i32> {
     let file_counter = AtomicUsize::new(0);
     let checksum_path = Path::new(checksum_source);
+    
+    // Open checksum file or use stdin
     let reader: Box<dyn BufRead> = if checksum_source == "-" {
         Box::new(BufReader::with_capacity(BUFFER_SIZE, io::stdin()))
     } else {
@@ -634,13 +841,25 @@ fn check_checksums(
         Box::new(BufReader::with_capacity(BUFFER_SIZE, checksum_file))
     };
 
+    // Counters for statistics
     let mut failed = 0;
     let mut total = 0;
     let mut invalid_lines = 0;
-    let mut results = Vec::new();
+    let mut results = Vec::with_capacity(256);
+    
+    // Track if any failure occurred (for early exit in status-only mode)
+    let has_failed = Arc::new(AtomicBool::new(false));
 
+    // Process each line
     for (line_num, line_result) in reader.lines().enumerate() {
         let line_num = line_num + 1;
+
+        // Early exit optimization for status-only mode
+        if status_only && has_failed.load(Ordering::Relaxed) {
+            return Ok(1);
+        }
+
+        // Read line from file
         let line = match line_result {
             Ok(l) => l,
             Err(e) => {
@@ -655,13 +874,16 @@ fn check_checksums(
             }
         };
 
+        // Parse checksum line
         match parse_checksum_line(&line) {
             Ok((expected_hash, filename)) => {
                 total += 1;
 
+                // Resolve and validate target file path
                 let target_path = Path::new(filename);
                 let canonical_target = safe_canonicalize(target_path)?;
 
+                // Attempt to open file and compute hash
                 let result = File::open(&canonical_target)
                     .and_then(|file| {
                         let metadata = file.metadata()?;
@@ -675,16 +897,20 @@ fn check_checksums(
                             .map_err(|e| format!("hash computation failed: {}", e))
                     });
 
+                // Compare computed hash with expected hash
                 match result {
                     Ok(actual_hash) => {
                         let status = if actual_hash.eq_ignore_ascii_case(expected_hash) {
+                            // Hash matches - file verified successfully
                             if !status_only && !quiet && config.output_format == OutputFormat::Text
                             {
                                 println!("{}: OK", filename);
                             }
                             VerificationStatus::Ok
                         } else {
+                            // Hash mismatch - verification failed
                             failed += 1;
+                            has_failed.store(true, Ordering::Relaxed);
                             if !status_only && config.output_format == OutputFormat::Text {
                                 eprintln!("{}: FAILED", filename);
                                 eprintln!(
@@ -699,19 +925,21 @@ fn check_checksums(
                             VerificationStatus::Failed
                         };
                         results.push(HashResult {
-                            filename: filename.to_string(),
+                            filename: PathBuf::from(filename),
                             hash: actual_hash,
                             status: Some(status),
                             benchmark_info: None,
                         });
                     }
                     Err(err) => {
+                        // Could not open or read file
                         failed += 1;
+                        has_failed.store(true, Ordering::Relaxed);
                         if !status_only && config.output_format == OutputFormat::Text {
                             eprintln!("{}: FAILED open or read - {}", filename, err);
                         }
                         results.push(HashResult {
-                            filename: filename.to_string(),
+                            filename: PathBuf::from(filename),
                             hash: expected_hash.to_string(),
                             status: Some(VerificationStatus::FailedOpenRead),
                             benchmark_info: None,
@@ -720,6 +948,7 @@ fn check_checksums(
                 }
             }
             Err(err) => {
+                // Line parsing failed - malformed checksum line
                 invalid_lines += 1;
                 if !status_only && config.output_format == OutputFormat::Text {
                     let source_name = if checksum_source == "-" {
@@ -728,8 +957,11 @@ fn check_checksums(
                         checksum_source
                     };
 
+                    // Provide detailed error messages based on parse error type
                     match err {
-                        ParseError::EmptyOrComment => {}
+                        ParseError::EmptyOrComment => {
+                            // Silently ignore empty lines and comments
+                        }
                         ParseError::TooShort(len) => {
                             eprintln!(
                                 "whirlpoolsum: {}: line {}: line too short ({} characters). \
@@ -765,10 +997,12 @@ fn check_checksums(
         }
     }
 
+    // Output structured results if JSON or YAML format requested
     if config.output_format == OutputFormat::Json || config.output_format == OutputFormat::Yaml {
         output_results_json_yaml(&results, config.output_format, true);
     }
 
+    // Print summary statistics in text mode
     if !status_only && config.output_format == OutputFormat::Text {
         if failed > 0 {
             eprintln!(
@@ -785,6 +1019,7 @@ fn check_checksums(
         }
     }
 
+    // Return exit code
     Ok(if failed > 0 || invalid_lines > 0 {
         1
     } else {
@@ -792,6 +1027,11 @@ fn check_checksums(
     })
 }
 
+// ============================================================================
+// Help and Documentation
+// ============================================================================
+
+/// Print comprehensive help message with usage information
 fn print_help() {
     let version = env!("CARGO_PKG_VERSION");
     let license = env!("CARGO_PKG_LICENSE");
@@ -849,8 +1089,14 @@ Current configuration:
     );
 }
 
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+
+/// Main function - parses arguments and dispatches to appropriate operations
 fn main() -> io::Result<()> {
-    let mut args = std::env::args().skip(1).peekable();
+    // Parse command-line arguments using OsString for non-UTF8 path support
+    let mut args = std::env::args_os().skip(1).peekable();
     let mut config = Config::default();
     let mut check_mode = false;
     let mut status_only = false;
@@ -858,8 +1104,10 @@ fn main() -> io::Result<()> {
     let mut quiet = false;
     let mut files = Vec::new();
 
+    // Process command-line arguments
     while let Some(arg) = args.next() {
-        match arg.as_str() {
+        let arg_str = arg.to_string_lossy();
+        match arg_str.as_ref() {
             "-c" | "--check" => check_mode = true,
             "--status" => status_only = true,
             "--warn" => warn = true,
@@ -867,7 +1115,7 @@ fn main() -> io::Result<()> {
             "--benchmark" => config.benchmark = true,
             "--max-file-size" => {
                 if let Some(size_arg) = args.next() {
-                    config.max_file_size = parse_size(&size_arg)?;
+                    config.max_file_size = parse_size(&size_arg.to_string_lossy())?;
                 } else {
                     eprintln!("error: --max-file-size requires a size argument");
                     process::exit(2);
@@ -875,10 +1123,11 @@ fn main() -> io::Result<()> {
             }
             "--max-files" => {
                 if let Some(count_arg) = args.next() {
-                    config.max_files = count_arg.parse().map_err(|_| {
+                    let count_str = count_arg.to_string_lossy();
+                    config.max_files = count_str.parse().map_err(|_| {
                         io::Error::new(
                             io::ErrorKind::InvalidInput,
-                            format!("Invalid file count: {}", count_arg),
+                            format!("Invalid file count: {}", count_str),
                         )
                     })?;
                 } else {
@@ -893,11 +1142,12 @@ fn main() -> io::Result<()> {
                 return Ok(());
             }
             "--" => {
+                // Everything after -- is treated as filenames
                 files.extend(args);
                 break;
             }
-            _ if arg.starts_with('-') => {
-                eprintln!("whirlpoolsum: unrecognized option '{}'", arg);
+            _ if arg_str.starts_with('-') => {
+                eprintln!("whirlpoolsum: unrecognized option '{}'", arg_str);
                 eprintln!("Try 'whirlpoolsum --help' for more information.");
                 process::exit(2);
             }
@@ -905,6 +1155,7 @@ fn main() -> io::Result<()> {
         }
     }
 
+    // Validate configuration
     if config.max_file_size == 0 {
         eprintln!("error: maximum file size cannot be zero");
         process::exit(2);
@@ -914,6 +1165,7 @@ fn main() -> io::Result<()> {
         process::exit(2);
     }
 
+    // Validate conflicting options
     if config.output_format != OutputFormat::Text && status_only {
         eprintln!("error: --json/--yaml cannot be used with --status");
         process::exit(2);
@@ -927,36 +1179,47 @@ fn main() -> io::Result<()> {
         process::exit(2);
     }
 
+    // Initialize shared file counter for resource tracking
     let file_counter = Arc::new(AtomicUsize::new(0));
 
+    // Special case: benchmark mode with no files runs a benchmark test
     if config.benchmark && files.is_empty() && !check_mode {
         return run_benchmark_test();
     }
 
+    // Execute appropriate operation based on mode
     let exit_code = if check_mode {
+        // Checksum verification mode
         if files.is_empty() {
+            // Read from stdin
             if !status_only && !quiet && config.output_format == OutputFormat::Text {
                 println!("Verifying checksums from standard input...");
             }
             check_checksums("-", &config, status_only, warn, quiet)?
         } else if files.len() == 1 {
+            // Read from single file
+            let filename = files[0].to_string_lossy();
             if !status_only && !quiet && config.output_format == OutputFormat::Text {
-                println!("Verifying checksums from file: {}", files[0]);
+                println!("Verifying checksums from file: {}", filename);
             }
-            check_checksums(&files[0], &config, status_only, warn, quiet)?
+            check_checksums(&filename, &config, status_only, warn, quiet)?
         } else {
+            // Multiple checksum files not allowed
             eprintln!("whirlpoolsum: only one checksum file allowed in check mode");
             process::exit(2);
         }
     } else {
+        // Hash generation mode
         let mut exit_code = 0;
 
         if files.is_empty() {
-            let result = process_file("-", &config, &file_counter)?;
+            // Hash from stdin
+            let result = process_file(&OsString::from("-"), &config, &file_counter)?;
             if config.output_format != OutputFormat::Text {
                 output_results_json_yaml(&[result], config.output_format, false);
             }
         } else if files.len() == 1 {
+            // Hash single file
             match process_file(&files[0], &config, &file_counter) {
                 Ok(result) => {
                     if config.output_format != OutputFormat::Text {
@@ -964,11 +1227,12 @@ fn main() -> io::Result<()> {
                     }
                 }
                 Err(e) => {
-                    eprintln!("whirlpoolsum: {}: {}", files[0], e);
+                    eprintln!("whirlpoolsum: {}: {}", files[0].to_string_lossy(), e);
                     exit_code = 1;
                 }
             }
         } else {
+            // Hash multiple files in parallel
             let results = process_files_parallel(&files, &config, Arc::clone(&file_counter));
 
             let mut collected_results = Vec::new();
@@ -980,12 +1244,13 @@ fn main() -> io::Result<()> {
                         }
                     }
                     Err((filename, e)) => {
-                        eprintln!("whirlpoolsum: {}: {}", filename, e);
+                        eprintln!("whirlpoolsum: {}: {}", filename.to_string_lossy(), e);
                         exit_code = 1;
                     }
                 }
             }
 
+            // Check if file limit was reached
             if file_counter.load(Ordering::Relaxed) >= config.max_files {
                 eprintln!(
                     "whirlpoolsum: maximum file limit reached ({}). Some files were skipped.",
@@ -994,6 +1259,7 @@ fn main() -> io::Result<()> {
                 exit_code = 3;
             }
 
+            // Output structured results if needed
             if config.output_format == OutputFormat::Json
                 || config.output_format == OutputFormat::Yaml
             {
@@ -1004,6 +1270,7 @@ fn main() -> io::Result<()> {
         exit_code
     };
 
+    // Exit with appropriate code
     if exit_code != 0 {
         process::exit(exit_code);
     }
