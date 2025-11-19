@@ -5,3 +5,4 @@
 0.4.1 / 2025-11-17 - program name, version and license added to the usage info
 0.5.0 / 2025-11-17 - json and yaml output support added
 0.6.0 / 2025-11-18 - Claude implements multithreading and benchmark + refactoring and minor fixes
+0.7.0 / 2025-11-19 - major refactoring, clippy fixes, format, code split, bash-completion, comments/docs

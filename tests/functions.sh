@@ -3,7 +3,7 @@
 set -e
 
 BASEDIR=$(dirname "$0")
-CMD="$BASEDIR/../target/debug/whirlpoolsum"
+CMD="$BASEDIR/../target/release/whirlpoolsum"
 
 # Colors
 ORANGE='\e[1;33m'
