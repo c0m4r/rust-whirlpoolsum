@@ -22,11 +22,17 @@ description: Cross-compile the project for AArch64 and Windows using `cross`
 
 ---
 
+```bash
 rustc --print=target-list
 rustup target add aarch64-unknown-linux-gnu
 rustup target add x86_64-pc-windows-msvc
 rustup target add x86_64-pc-windows-gnu
 cross build --target aarch64-unknown-linux-gnu --release
+```
 
 In case of errors:
+
+```bash
 cross clean || rm -rf target
+```
+
