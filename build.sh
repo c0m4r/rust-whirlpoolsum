@@ -13,6 +13,6 @@ cargo build --release
 cargo test
 ./target/release/whirlpoolsum --benchmark
 mkdir -p "$BASEDIR"/dist
-cp ./target/release/whirlpoolsum "$BASEDIR"/dist/
+cp -v ./target/release/whirlpoolsum "$BASEDIR"/dist/
 sha256sum "$BASEDIR"/dist/whirlpoolsum > "$BASEDIR"/dist/whirlpoolsum.sha256
 whirlpoolsum "$BASEDIR"/dist/whirlpoolsum > "$BASEDIR"/dist/whirlpoolsum.wrl
