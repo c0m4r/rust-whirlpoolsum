@@ -12,7 +12,7 @@ Deps: [whirlpool](https://crates.io/crates/whirlpool) | [colored](https://crates
 ## Quick install (x86_64/glibc)
 
 ```bash
-wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.6.0/whirlpoolsum
+wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.7.0/whirlpoolsum
 echo "27ea4072255ac9d9243d127d3f7daa3076c85b456cf366366ddbed60dfeb37a3  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
 sudo mv whirlpoolsum /usr/local/bin/
 sudo chmod +x /usr/local/bin/whirlpoolsum
