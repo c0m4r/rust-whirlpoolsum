@@ -26,11 +26,9 @@ whirlpoolsum -V
 
 On Alpine install [gcompat](https://git.adelielinux.org/adelie/gcompat) with `apk add gcompat`
 
-## Other platformss (ARM64, RISC-V, Windows x64)
+## Other platforms (ARM64, RISC-V, Windows x64)
 
-- aarch64-unknown-linux-gnu => whirlpoolsum-aarch64-glibc
-- riscv64gc-unknown-linux-gnu => whirlpoolsum-riscv64-glibc
-- x86_64-pc-windows-gnu => whirlpoolsum.exe
+Get the latest binaries at https://github.com/c0m4r/rust-whirlpoolsum/releases/tag/0.8.0
 
 ## Usage
 
