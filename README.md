@@ -3,7 +3,7 @@
 ![Rust](https://img.shields.io/badge/made%20with-Rust-orange?logo=rust&amp;logoColor=ffffff)
 [![License: CC0-1.0](https://img.shields.io/badge/License-CC0%201.0-lightgrey.svg)](http://creativecommons.org/publicdomain/zero/1.0/)
 
-<img width="926" height="579" alt="image" src="https://raw.githubusercontent.com/c0m4r/rust-whirlpoolsum/refs/heads/main/whirlpoolsum_logo.png" />
+<img alt="image" src="https://raw.githubusercontent.com/c0m4r/rust-whirlpoolsum/refs/heads/main/whirlpoolsum_logo.png" />
 
 Rust version of the whirlpoolsum that prints and checks WHIRLPOOL 512-bit checksums.
 
