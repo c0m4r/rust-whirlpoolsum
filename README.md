@@ -32,7 +32,7 @@ Get the latest binaries at https://github.com/c0m4r/rust-whirlpoolsum/releases/t
 
 ## Build from source
 
-1. Install Rust](https://rust-lang.org/tools/install/)
+1. [Install Rust](https://rust-lang.org/tools/install/)
 2. Run `cargo build --release` or use `./build.sh` for extended testing
 3. You'll find the binary executable in ./target/release/whirlpoolsum
 
