@@ -30,6 +30,12 @@ On Alpine install [gcompat](https://git.adelielinux.org/adelie/gcompat) with `ap
 
 Get the latest binaries at https://github.com/c0m4r/rust-whirlpoolsum/releases/tag/0.8.0
 
+## Build from source
+
+1. Install Rust](https://rust-lang.org/tools/install/)
+2. Run `cargo build --release` or use `./build.sh` for extended testing
+3. You'll find the binary executable in ./target/release/whirlpoolsum
+
 ## Usage
 
 Text checksum (stdin)
