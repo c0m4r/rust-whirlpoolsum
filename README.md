@@ -16,11 +16,11 @@ Integrates [Seccomp/BPF](https://en.wikipedia.org/wiki/Seccomp) sandboxing, [Lan
 ## Quick install (x86_64/glibc)
 
 ```bash
-wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.9.2/whirlpoolsum
-echo "ec480a357d4b2dd72d6fba17721413d1f44ea9a3569695e062eb9b02f8206233  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
+wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.9.3/whirlpoolsum
+echo "bc1b8a333c9c99fca7bdc7e7b7451c372311531db203b1683e5aae5318256569  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
 sudo mv whirlpoolsum /usr/local/bin/
 sudo chmod +x /usr/local/bin/whirlpoolsum
-echo "ec8ef171d11df2ae22eb5a5c06baff070d5ce3f1730cde8ab2abb60360897f5f46bf2a7ec884dd1812d6095d41066d57c3a3ed0fb8b3dbc6aa15467aef424761  /usr/local/bin/whirlpoolsum" | whirlpoolsum -c
+echo "4c9d4ab9c9f20cc8d54e9f4b5cee186697cb80556f47dab4265dec172f880120a3a060df66ec4be1a7d427f540d2a7aa58d12fa600b789ced14adb485911bca9  /usr/local/bin/whirlpoolsum" | whirlpoolsum -c
 whirlpoolsum -V
 ```
 
@@ -28,7 +28,7 @@ On Alpine install [gcompat](https://git.adelielinux.org/adelie/gcompat) with `ap
 
 ## Other platforms (ARM64, RISC-V, Windows x64)
 
-Get the latest binaries at https://github.com/c0m4r/rust-whirlpoolsum/releases/tag/0.9.2
+Get the latest binaries at https://github.com/c0m4r/rust-whirlpoolsum/releases/tag/0.9.3
 
 ## Build from source
 
