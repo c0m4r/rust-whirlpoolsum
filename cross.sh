@@ -7,6 +7,7 @@ cross clean
 targets=(
     aarch64-unknown-linux-gnu
     riscv64gc-unknown-linux-gnu
+    x86_64-unknown-linux-musl
     x86_64-pc-windows-gnu
 )
 
@@ -17,6 +18,7 @@ for target in "${targets[@]}"; do
     case "$target" in
         "aarch64-unknown-linux-gnu") name="whirlpoolsum-aarch64-glibc" ;;
         "riscv64gc-unknown-linux-gnu") name="whirlpoolsum-riscv64-glibc" ;;
+        "x86_64-unknown-linux-musl") name="whirlpoolsum-x86_64-musl" ;;
         "x86_64-pc-windows-gnu") name="whirlpoolsum.exe" ;;
         *) name="whirlpoolsum-${target}"
     esac
