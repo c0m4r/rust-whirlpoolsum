@@ -108,6 +108,8 @@ Text-based UI with basic functionality using [ratatui](https://ratatui.rs/)
 whirlpoolsum --tui
 ```
 
+...and a snake game as a bonus :)
+
 ## Configuration options
 
 ```
