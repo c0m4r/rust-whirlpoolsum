@@ -416,9 +416,14 @@ impl App {
             let file_counter = Arc::new(AtomicUsize::new(0));
 
             match processor::process_file(path, &config, &file_counter) {
-                Ok(result) => {
+                Ok(Some(result)) => {
                     let msg = format!("Hash:  {}", result.hash);
                     let _ = tx.send(AppMessage::ComputationComplete(msg)).await;
+                }
+                Ok(None) => {
+                    let _ = tx
+                        .send(AppMessage::ComputationError("Is a directory".to_string()))
+                        .await;
                 }
                 Err(e) => {
                     let _ = tx.send(AppMessage::ComputationError(e.to_string())).await;

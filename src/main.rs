@@ -8,6 +8,11 @@ use whirlpoolsum::{benchmark, cli, config, processor, verifier};
 mod security;
 
 fn main() {
+    // Reset SIGPIPE handler to default to prevent panics on broken pipe (e.g. when piping to head)
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
     // Enable security sandbox (Seccomp) to block network and execution
     if let Err(e) = security::enable_sandbox() {
         eprintln!("Failed to enable security sandbox: {}", e);
@@ -335,13 +340,14 @@ fn main() {
         if cli.files.is_empty() {
             // Hash from stdin
             match processor::process_file(std::path::Path::new("-"), &config, &file_counter) {
-                Ok(result) => {
+                Ok(Some(result)) => {
                     if config.output_format == config::OutputFormat::Text {
                         processor::print_text_result(&result);
                     } else {
                         processor::output_results_json_yaml(&[result], config.output_format, false);
                     }
                 }
+                Ok(None) => {} // Should not happen for stdin
                 Err(e) => {
                     eprintln!("whirlpoolsum: {}", e);
                     exit_code = 1;
@@ -350,13 +356,14 @@ fn main() {
         } else if cli.files.len() == 1 {
             // Hash single file
             match processor::process_file(&cli.files[0], &config, &file_counter) {
-                Ok(result) => {
+                Ok(Some(result)) => {
                     if config.output_format == config::OutputFormat::Text {
                         processor::print_text_result(&result);
                     } else {
                         processor::output_results_json_yaml(&[result], config.output_format, false);
                     }
                 }
+                Ok(None) => {} // Directory skipped
                 Err(e) => {
                     eprintln!("whirlpoolsum: {}: {}", cli.files[0].display(), e);
                     exit_code = 1;
@@ -386,13 +393,14 @@ fn main() {
                 // Print available results in order
                 while let Some(res) = buffer.remove(&next_idx) {
                     match res {
-                        Ok(hash_result) => {
+                        Ok(Some(hash_result)) => {
                             if config.output_format == config::OutputFormat::Text {
                                 processor::print_text_result(&hash_result);
                             } else {
                                 collected_results.push(hash_result);
                             }
                         }
+                        Ok(None) => {} // Directory skipped
                         Err((filename, e)) => {
                             let msg = e.to_string();
                             if msg.contains("Maximum file limit reached") {

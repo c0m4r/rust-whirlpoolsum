@@ -118,7 +118,7 @@ pub fn process_file(
     filename: &Path,
     config: &config::Config,
     file_counter: &AtomicUsize,
-) -> io::Result<HashResult> {
+) -> io::Result<Option<HashResult>> {
     // Start timing if benchmarking is enabled
     let start_time = if config.benchmark {
         Some(Instant::now())
@@ -147,6 +147,11 @@ pub fn process_file(
                 format!("Failed to access '{}': {}", canonical_path.display(), e),
             )
         })?;
+
+        // Skip directories quietly
+        if metadata.is_dir() {
+            return Ok(None);
+        }
 
         let file_size = metadata.len();
         let file = util::secure_open_file(&canonical_path, config, file_counter, Some(metadata))?;
@@ -190,7 +195,7 @@ pub fn process_file(
         benchmark_info,
     };
 
-    Ok(result)
+    Ok(Some(result))
 }
 
 /// Print result in text format
@@ -206,7 +211,7 @@ pub fn print_text_result(result: &HashResult) {
 
 /// Type alias for the result sender to reduce complexity
 pub type ProcessResultSender =
-    std::sync::mpsc::Sender<(usize, Result<HashResult, (PathBuf, io::Error)>)>;
+    std::sync::mpsc::Sender<(usize, Result<Option<HashResult>, (PathBuf, io::Error)>)>;
 
 /// Process multiple files in parallel using rayon
 pub fn process_files_parallel(
