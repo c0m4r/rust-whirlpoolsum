@@ -11,20 +11,36 @@ use super::app::{App, InputMode, ProcessingState, Tab};
 pub fn ui(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Tabs
-            Constraint::Length(3), // Help message
-            Constraint::Length(3), // Input
-            Constraint::Min(5),    // Content area
-            Constraint::Length(1), // Status bar
-        ])
+        .constraints(if app.current_tab == Tab::Benchmark {
+            vec![
+                Constraint::Length(3), // Tabs
+                Constraint::Length(3), // Help message
+                Constraint::Min(5),    // Content area
+                Constraint::Length(1), // Status bar
+            ]
+        } else {
+            vec![
+                Constraint::Length(3), // Tabs
+                Constraint::Length(3), // Help message
+                Constraint::Length(3), // Input
+                Constraint::Min(5),    // Content area
+                Constraint::Length(1), // Status bar
+            ]
+        })
         .split(f.area());
 
-    render_tabs(f, app, chunks[0]);
-    render_help(f, app, chunks[1]);
-    render_input(f, app, chunks[2]);
-    render_content(f, app, chunks[3]);
-    render_status_bar(f, app, chunks[4]);
+    if app.current_tab == Tab::Benchmark {
+        render_tabs(f, app, chunks[0]);
+        render_help(f, app, chunks[1]);
+        render_content(f, app, chunks[2]);
+        render_status_bar(f, app, chunks[3]);
+    } else {
+        render_tabs(f, app, chunks[0]);
+        render_help(f, app, chunks[1]);
+        render_input(f, app, chunks[2]);
+        render_content(f, app, chunks[3]);
+        render_status_bar(f, app, chunks[4]);
+    }
 }
 
 fn render_tabs(f: &mut Frame, app: &App, area: Rect) {
@@ -57,14 +73,31 @@ fn render_help(f: &mut Frame, app: &App, area: Rect) {
                 Span::raw("Press "),
                 Span::styled("q", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" quit, "),
-                Span::styled("Tab/←→", Style::default().add_modifier(Modifier::BOLD)),
+                Span::styled("Tab", Style::default().add_modifier(Modifier::BOLD)),
                 Span::raw(" switch mode, "),
             ];
 
             let mode_specific = match app.current_tab {
-                Tab::Text | Tab::File => vec![
+                Tab::Text => vec![
                     Span::styled("e", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" edit"),
+                    Span::raw(" edit, "),
+                    Span::styled("Del", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" clear"),
+                ],
+                Tab::File => vec![
+                    Span::styled("e", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" edit path, "),
+                    Span::styled(
+                        "↑/↓/PgUp/PgDn/Home/End",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(" navigate, "),
+                    Span::styled("Right/Enter", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" enter dir, "),
+                    Span::styled("Left/Back", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" parent dir, "),
+                    Span::styled("Del", Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" clear"),
                 ],
                 Tab::Benchmark => vec![
                     Span::styled("b", Style::default().add_modifier(Modifier::BOLD)),
@@ -111,18 +144,62 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_content(f: &mut Frame, app: &App, area: Rect) {
     match app.current_tab {
-        Tab::Text | Tab::File => render_messages(f, app, area),
+        Tab::Text => render_messages(f, app, area),
+        Tab::File => {
+            // Split content area for File Browser and Messages
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(35), // File Browser
+                    Constraint::Percentage(65), // Results
+                ])
+                .split(area);
+            render_file_browser(f, app, chunks[0]);
+            render_messages(f, app, chunks[1]);
+        }
         Tab::Benchmark => render_benchmark(f, app, area),
     }
+}
+
+fn render_file_browser(f: &mut Frame, app: &App, area: Rect) {
+    let items: Vec<ListItem> = app
+        .dir_entries
+        .iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| ".".to_string());
+
+            let icon = if path.is_dir() { "📁 " } else { "📄 " };
+            let content = Line::from(vec![
+                Span::styled(icon, Style::default().fg(Color::Blue)),
+                Span::raw(name),
+            ]);
+            ListItem::new(content)
+        })
+        .collect();
+
+    let title = format!("Browser: {}", app.current_dir.display());
+    let list = List::new(items)
+        .block(Block::default().borders(Borders::ALL).title(title))
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol(">> ");
+
+    f.render_stateful_widget(list, area, &mut app.dir_state.clone());
 }
 
 fn render_messages(f: &mut Frame, app: &App, area: Rect) {
     let mut items: Vec<ListItem> = app
         .messages
         .iter()
-        .enumerate()
-        .map(|(i, m)| {
-            let content = Line::from(Span::raw(format!("{}: {}", i, m)));
+        .map(|(time, m)| {
+            let time_str = time.format("%H:%M:%S").to_string();
+            let content = Line::from(Span::raw(format!("[{}] {}", time_str, m)));
             ListItem::new(content)
         })
         .collect();

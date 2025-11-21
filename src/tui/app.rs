@@ -4,7 +4,6 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 use std::io;
-use std::path::Path;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -57,15 +56,23 @@ pub enum ProcessingState {
     Error(String),
 }
 
+use chrono::{DateTime, Local};
+use ratatui::widgets::ListState;
+use std::path::PathBuf;
+
 pub struct App {
     pub current_tab: Tab,
     pub input: String,
     pub input_mode: InputMode,
-    pub messages: Vec<String>,
+    pub messages: Vec<(DateTime<Local>, String)>,
     pub config: Config,
     pub processing_state: ProcessingState,
     pub spinner_frame: usize,
     pub benchmark_result: Option<BenchmarkResult>,
+    // File browser state
+    pub current_dir: PathBuf,
+    pub dir_entries: Vec<PathBuf>,
+    pub dir_state: ListState,
 }
 
 #[derive(Debug, Clone)]
@@ -78,7 +85,8 @@ pub struct BenchmarkResult {
 
 impl App {
     pub fn new(config: Config) -> App {
-        App {
+        let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let mut app = App {
             current_tab: Tab::Text,
             input: String::new(),
             input_mode: InputMode::Normal,
@@ -87,6 +95,123 @@ impl App {
             processing_state: ProcessingState::Idle,
             spinner_frame: 0,
             benchmark_result: None,
+            current_dir,
+            dir_entries: Vec::new(),
+            dir_state: ListState::default(),
+        };
+        app.read_dir();
+        app
+    }
+
+    pub fn read_dir(&mut self) {
+        self.dir_entries.clear();
+        if let Ok(entries) = std::fs::read_dir(&self.current_dir) {
+            for entry in entries.flatten() {
+                self.dir_entries.push(entry.path());
+            }
+        }
+        // Sort: directories first, then files
+        self.dir_entries.sort_by(|a, b| {
+            let a_is_dir = a.is_dir();
+            let b_is_dir = b.is_dir();
+            if a_is_dir && !b_is_dir {
+                std::cmp::Ordering::Less
+            } else if !a_is_dir && b_is_dir {
+                std::cmp::Ordering::Greater
+            } else {
+                a.file_name().cmp(&b.file_name())
+            }
+        });
+        self.dir_state.select(Some(0));
+    }
+
+    pub fn next_file(&mut self) {
+        let i = match self.dir_state.selected() {
+            Some(i) => {
+                if i >= self.dir_entries.len().saturating_sub(1) {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.dir_state.select(Some(i));
+    }
+
+    pub fn previous_file(&mut self) {
+        let i = match self.dir_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.dir_entries.len().saturating_sub(1)
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.dir_state.select(Some(i));
+    }
+
+    pub fn next_page(&mut self) {
+        let i = match self.dir_state.selected() {
+            Some(i) => {
+                let len = self.dir_entries.len();
+                if len == 0 {
+                    0
+                } else {
+                    // Jump 10 items or to end
+                    (i + 10).min(len - 1)
+                }
+            }
+            None => 0,
+        };
+        self.dir_state.select(Some(i));
+    }
+
+    pub fn previous_page(&mut self) {
+        let i = match self.dir_state.selected() {
+            Some(i) => {
+                // Jump 10 items back or to start
+                i.saturating_sub(10)
+            }
+            None => 0,
+        };
+        self.dir_state.select(Some(i));
+    }
+
+    pub fn go_to_top(&mut self) {
+        if !self.dir_entries.is_empty() {
+            self.dir_state.select(Some(0));
+        }
+    }
+
+    pub fn go_to_bottom(&mut self) {
+        if !self.dir_entries.is_empty() {
+            self.dir_state.select(Some(self.dir_entries.len() - 1));
+        }
+    }
+
+    pub fn enter_dir(&mut self) {
+        if let Some(selected) = self.dir_state.selected() {
+            if let Some(path) = self.dir_entries.get(selected) {
+                if path.is_dir() {
+                    self.current_dir = path.clone();
+                    self.read_dir();
+                    self.input.clear(); // Clear input when changing directory
+                } else {
+                    // Select file
+                    self.input = path.to_string_lossy().to_string();
+                }
+            }
+        }
+    }
+
+    pub fn go_to_parent(&mut self) {
+        if let Some(parent) = self.current_dir.parent() {
+            self.current_dir = parent.to_path_buf();
+            self.read_dir();
+            self.input.clear();
         }
     }
 
@@ -127,11 +252,11 @@ impl App {
                         }
                         AppMessage::ComputationComplete(result) => {
                             self.processing_state = ProcessingState::Complete;
-                            self.messages.push(result);
+                            self.messages.push((Local::now(), result));
                         }
                         AppMessage::ComputationError(err) => {
                             self.processing_state = ProcessingState::Error(err.clone());
-                            self.messages.push(format!("Error: {}", err));
+                            self.messages.push((Local::now(), format!("Error: {}", err)));
                         }
                         AppMessage::BenchmarkComplete(result) => {
                             self.processing_state = ProcessingState::Complete;
@@ -150,7 +275,9 @@ impl App {
                 } => {}
             }
 
-            if self.input_mode == InputMode::Normal && self.messages.iter().any(|m| m == "quit") {
+            if self.input_mode == InputMode::Normal
+                && self.messages.iter().any(|(_, m)| m == "quit")
+            {
                 break;
             }
         }
@@ -167,19 +294,30 @@ impl App {
         match self.input_mode {
             InputMode::Normal => match code {
                 KeyCode::Char('q') => {
-                    self.messages.push("quit".to_string());
+                    self.messages.push((Local::now(), "quit".to_string()));
                 }
                 KeyCode::Char('e') => {
                     self.input_mode = InputMode::Editing;
-                    self.input.clear();
+                    // Don't clear input if we selected a file
                 }
-                KeyCode::Tab | KeyCode::Right => {
+                KeyCode::Tab => {
                     self.current_tab = self.current_tab.next();
                     self.processing_state = ProcessingState::Idle;
                 }
-                KeyCode::BackTab | KeyCode::Left => {
+                KeyCode::BackTab => {
                     self.current_tab = self.current_tab.prev();
                     self.processing_state = ProcessingState::Idle;
+                }
+                KeyCode::Right => {
+                    if self.current_tab == Tab::File {
+                        self.enter_dir();
+                    }
+                }
+                KeyCode::Left => {
+                    // If in File tab, Left goes to parent dir
+                    if self.current_tab == Tab::File {
+                        self.go_to_parent();
+                    }
                 }
                 KeyCode::Char('b')
                     if self.current_tab == Tab::Benchmark
@@ -187,20 +325,50 @@ impl App {
                 {
                     self.run_benchmark(tx);
                 }
+                // File browser navigation
+                KeyCode::Down if self.current_tab == Tab::File => {
+                    self.next_file();
+                }
+                KeyCode::Up if self.current_tab == Tab::File => {
+                    self.previous_file();
+                }
+                KeyCode::PageDown if self.current_tab == Tab::File => {
+                    self.next_page();
+                }
+                KeyCode::PageUp if self.current_tab == Tab::File => {
+                    self.previous_page();
+                }
+                KeyCode::Home if self.current_tab == Tab::File => {
+                    self.go_to_top();
+                }
+                KeyCode::End if self.current_tab == Tab::File => {
+                    self.go_to_bottom();
+                }
+                KeyCode::Enter if self.current_tab == Tab::File => {
+                    self.enter_dir();
+                }
+                KeyCode::Backspace if self.current_tab == Tab::File => {
+                    self.go_to_parent();
+                }
+                KeyCode::Delete => {
+                    self.input.clear();
+                }
                 _ => {}
             },
             InputMode::Editing => match code {
                 KeyCode::Enter => {
-                    let input_text = self.input.drain(..).collect::<String>();
+                    let input_text = self.input.clone(); // Keep input for history/display if needed
                     self.input_mode = InputMode::Normal;
 
                     if !input_text.is_empty() {
                         match self.current_tab {
                             Tab::Text => {
                                 self.process_text(input_text, tx);
+                                self.input.clear();
                             }
                             Tab::File => {
                                 self.process_file(input_text, tx);
+                                // Don't clear input, might want to edit it
                             }
                             _ => {}
                         }
@@ -214,7 +382,7 @@ impl App {
                 }
                 KeyCode::Esc => {
                     self.input_mode = InputMode::Normal;
-                    self.input.clear();
+                    // self.input.clear(); // Keep input
                 }
                 _ => {}
             },
@@ -223,7 +391,8 @@ impl App {
 
     fn process_text(&mut self, text: String, tx: mpsc::Sender<AppMessage>) {
         self.processing_state = ProcessingState::Computing;
-        self.messages.push(format!("Input: {}", text));
+        self.messages
+            .push((Local::now(), format!("Input: {}", text)));
 
         tokio::spawn(async move {
             // Simulate some processing time for animation
@@ -237,12 +406,13 @@ impl App {
 
     fn process_file(&mut self, path_str: String, tx: mpsc::Sender<AppMessage>) {
         self.processing_state = ProcessingState::Computing;
-        self.messages.push(format!("File: {}", path_str));
+        self.messages
+            .push((Local::now(), format!("File: {}", path_str)));
 
         let config = self.config.clone();
 
         tokio::spawn(async move {
-            let path = Path::new(&path_str);
+            let path = std::path::Path::new(&path_str);
             let file_counter = Arc::new(AtomicUsize::new(0));
 
             match processor::process_file(path, &config, &file_counter) {
@@ -259,7 +429,8 @@ impl App {
 
     fn run_benchmark(&mut self, tx: mpsc::Sender<AppMessage>) {
         self.processing_state = ProcessingState::Computing;
-        self.messages.push("Running benchmark...".to_string());
+        self.messages
+            .push((Local::now(), "Running benchmark...".to_string()));
 
         tokio::spawn(async move {
             use crate::config;
