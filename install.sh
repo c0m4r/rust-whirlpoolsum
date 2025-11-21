@@ -13,5 +13,5 @@ if [ $(whoami) != "root" ]; then
 fi
 
 echo "Installing to /usr/local/bin/whirlpoolsum"
-$SUDO cp -v target/release/whirlpoolsum /usr/local/bin/
+$SUDO cp -v target/release/whirlpoolsum /usr/local/bin/ || $SUDO cp -v dist/whirlpoolsum /usr/local/bin/
 $SUDO ln -sfv whirlpoolsum /usr/local/bin/wrl512sum
