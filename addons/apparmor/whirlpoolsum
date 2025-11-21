@@ -1,0 +1,75 @@
+# AppArmor profile for whirlpoolsum (CLI mode)
+# This profile applies to any executable with "whirlpoolsum" in the name
+# This protects against temporary build binaries executed anywhere in the filesystem
+# Install to: /etc/apparmor.d/whirlpoolsum.cli
+
+#include <tunables/global>
+
+# Pattern-based attachment: matches any path with "whirlpoolsum" in the name
+profile whirlpoolsum /**/*whirlpoolsum* flags=(attach_disconnected) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  # Allow execution of any whirlpoolsum binary
+  /**/*whirlpoolsum* mr,
+
+  # Allow reading system libraries
+  /usr/lib/** mr,
+  /lib/** mr,
+
+  # Allow reading configuration files if they exist
+  /etc/whirlpoolsum/*.conf r,
+  owner @{HOME}/.config/whirlpoolsum/*.conf r,
+
+  # Allow reading files for checksumming
+  # Users can read files they own or have permission to read
+  owner @{HOME}/** r,
+  /tmp/** r,
+  /var/tmp/** r,
+  
+  # Allow reading from stdin
+  /dev/tty r,
+  /dev/pts/* rw,
+  
+  # Allow reading checksum files for verification
+  /**.wrl r,
+  /**.sha512 r,
+  /**.whirlpool r,
+
+  # Allow reading anywhere in the filesystem with user permissions
+  # This is needed for checksumming arbitrary files
+  /** r,
+
+  # Deny write access except to stdout/stderr and result files
+  deny /** w,
+  
+  # Allow writing checksum result files
+  owner @{HOME}/**/*.wrl w,
+  owner @{HOME}/**/*.json w,
+  owner @{HOME}/**/*.yaml w,
+  owner /tmp/**/*.wrl w,
+  owner /tmp/**/*.json w,
+  owner /tmp/**/*.yaml w,
+  
+  # Allow stdout/stderr
+  /dev/tty rw,
+  /dev/pts/* rw,
+  owner /dev/stdout w,
+  owner /dev/stderr w,
+
+  # Proc filesystem access
+  @{PROC}/sys/kernel/random/uuid r,
+  owner @{PROC}/@{pid}/stat r,
+  owner @{PROC}/@{pid}/status r,
+  
+  # Deny network access
+  deny network,
+  
+  # Deny capability to execute other programs
+  deny capability sys_admin,
+  deny capability sys_module,
+  deny capability sys_rawio,
+  
+  # Signal controls
+  signal (receive) set=(term, int, quit) peer=unconfined,
+}
