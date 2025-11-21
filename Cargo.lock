@@ -1027,7 +1027,7 @@ dependencies = [
 
 [[package]]
 name = "whirlpoolsum"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "chrono",
  "clap",

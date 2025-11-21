@@ -14,11 +14,11 @@ Vibe-coded with Qwen3 (Max+Coder) / Claude Sonnet 4.5 (Thinking+Extended) / Gemi
 ## Quick install (x86_64/glibc)
 
 ```bash
-wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.9.0/whirlpoolsum
-echo "808966f62c055310d945078fcf00310061df15e693ae82b396317ce5684cba28  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
+wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.9.1/whirlpoolsum
+echo "6f52cec70ac9a6adb197511f6ad3289d7fb4177308ea8585b2e9d1f43c42d08c  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
 sudo mv whirlpoolsum /usr/local/bin/
 sudo chmod +x /usr/local/bin/whirlpoolsum
-echo "63323b7d9ee73dad2db3d8c6c6d6d2a4ad0d46eaa080f1e788a245ab74329def6c465f202832a93f2a65f820aa11209b79544c65132e574ba7be7d4b0f7838fe  /usr/local/bin/whirlpoolsum" | whirlpoolsum -c
+echo "023d141713300147bac75a8ef0c1c2e02ef291bdd417bf966b82ca91207fc98bae2b17ff636575d67e02475a49c1cf29afdbef11fc4dc9f202029f0ad751bda5  /usr/local/bin/whirlpoolsum" | whirlpoolsum -c
 whirlpoolsum -V
 ```
 
@@ -26,7 +26,7 @@ On Alpine install [gcompat](https://git.adelielinux.org/adelie/gcompat) with `ap
 
 ## Other platforms (ARM64, RISC-V, Windows x64)
 
-Get the latest binaries at https://github.com/c0m4r/rust-whirlpoolsum/releases/tag/0.9.0
+Get the latest binaries at https://github.com/c0m4r/rust-whirlpoolsum/releases/tag/0.9.1
 
 ## Build from source
 

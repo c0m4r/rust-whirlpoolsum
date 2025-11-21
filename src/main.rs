@@ -117,7 +117,7 @@ fn main() {
     // We only allow access to the specified input files.
     // Output is to stdout, which is already open, so no special rule needed.
     #[cfg(target_os = "linux")]
-    {
+    let check_file_content = {
         let mut input_paths = Vec::new();
         for path in &cli.files {
             // Canonicalize paths to ensure they are absolute and resolve symlinks.
@@ -186,13 +186,61 @@ fn main() {
             }
         }
 
+        // If we are in check mode, we need to pre-parse the checksum file to find which files to allow.
+        // We read the entire file into memory, extract filenames, and add them to input_paths.
+        let check_file_content = if cli.check {
+            let content = if cli.files.is_empty() || cli.files[0].to_string_lossy() == "-" {
+                // Read from stdin
+                let mut buffer = Vec::new();
+                use std::io::Read;
+                if let Err(e) = std::io::stdin().read_to_end(&mut buffer) {
+                    eprintln!("Failed to read from stdin: {}", e);
+                    process::exit(1);
+                }
+                buffer
+            } else {
+                // Read from file
+                match std::fs::read(&cli.files[0]) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        eprintln!("Failed to read checksum file: {}", e);
+                        process::exit(1);
+                    }
+                }
+            };
+
+            // Extract filenames and add to Landlock allowed paths
+            let cursor = std::io::Cursor::new(&content);
+            let filenames = verifier::extract_filenames(cursor);
+
+            for filename in filenames {
+                let path = std::path::Path::new(&filename);
+                // We attempt to canonicalize. If it fails (file doesn't exist),
+                // we can't add it to Landlock, which is fine (open will fail later).
+                if let Ok(canon) = std::fs::canonicalize(path) {
+                    input_paths.push(canon);
+                } else {
+                    // Try to resolve relative to current dir if canonicalize fails?
+                    // Actually, if canonicalize fails, the file likely doesn't exist.
+                    // But maybe it's relative to the checksum file?
+                    // The verifier logic handles paths relative to CWD.
+                    // So we just try to canonicalize from CWD.
+                }
+            }
+
+            Some(content)
+        } else {
+            None
+        };
+
         if let Err(e) = security::enable_landlock(&input_paths, None) {
             eprintln!("Failed to enable Landlock: {}", e);
-            // We don't exit, just warn? Or exit? Seccomp exits.
-            // Let's exit to be safe.
             process::exit(1);
         }
-    }
+
+        // Store content for later use to avoid re-reading (especially from stdin)
+        check_file_content
+    };
 
     // Validate configuration
     if config.max_file_size == 0 {
@@ -218,45 +266,67 @@ fn main() {
 
     let exit_code = if cli.check {
         // Checksum verification mode
-        if cli.files.is_empty() {
-            // Read from stdin
-            if !cli.status && !cli.quiet && config.output_format == config::OutputFormat::Text {
-                println!("Verifying checksums from standard input...");
+
+        // Retrieve pre-read content if available (Linux Landlock path)
+        #[cfg(target_os = "linux")]
+        let content = check_file_content;
+
+        // For non-Linux, we haven't read it yet.
+        #[cfg(not(target_os = "linux"))]
+        let content = if cli.files.is_empty() || cli.files[0].to_string_lossy() == "-" {
+            let mut buffer = Vec::new();
+            use std::io::Read;
+            if let Err(e) = std::io::stdin().read_to_end(&mut buffer) {
+                eprintln!("Failed to read from stdin: {}", e);
+                process::exit(1);
             }
-            match verifier::check_checksums("-", &config, cli.status, cli.warn, cli.quiet) {
-                Ok((code, results)) => {
-                    if config.output_format != config::OutputFormat::Text {
-                        processor::output_results_json_yaml(&results, config.output_format, true);
-                    }
-                    code
-                }
-                Err(e) => {
-                    eprintln!("whirlpoolsum: {}", e);
-                    1
-                }
-            }
-        } else if cli.files.len() == 1 {
-            // Read from single file
-            let filename = cli.files[0].to_string_lossy();
-            if !cli.status && !cli.quiet && config.output_format == config::OutputFormat::Text {
-                println!("Verifying checksums from file: {}", filename);
-            }
-            match verifier::check_checksums(&filename, &config, cli.status, cli.warn, cli.quiet) {
-                Ok((code, results)) => {
-                    if config.output_format != config::OutputFormat::Text {
-                        processor::output_results_json_yaml(&results, config.output_format, true);
-                    }
-                    code
-                }
-                Err(e) => {
-                    eprintln!("whirlpoolsum: {}", e);
-                    1
-                }
-            }
+            Some(buffer)
         } else {
-            // Multiple checksum files not allowed
-            eprintln!("whirlpoolsum: only one checksum file allowed in check mode");
-            process::exit(2);
+            match std::fs::read(&cli.files[0]) {
+                Ok(c) => Some(c),
+                Err(e) => {
+                    eprintln!("Failed to read checksum file: {}", e);
+                    process::exit(1);
+                }
+            }
+        };
+
+        let content = content.expect("Content should be available");
+        let cursor = std::io::Cursor::new(&content);
+        let reader = std::io::BufReader::new(cursor);
+
+        let source_name = if cli.files.is_empty() || cli.files[0].to_string_lossy() == "-" {
+            "-"
+        } else {
+            cli.files[0].to_str().unwrap_or("checksums.wrl")
+        };
+
+        if !cli.status && !cli.quiet && config.output_format == config::OutputFormat::Text {
+            if source_name == "-" {
+                println!("Verifying checksums from standard input...");
+            } else {
+                println!("Verifying checksums from file: {}", source_name);
+            }
+        }
+
+        match verifier::check_checksums(
+            reader,
+            source_name,
+            &config,
+            cli.status,
+            cli.warn,
+            cli.quiet,
+        ) {
+            Ok((code, results)) => {
+                if config.output_format != config::OutputFormat::Text {
+                    processor::output_results_json_yaml(&results, config.output_format, true);
+                }
+                code
+            }
+            Err(e) => {
+                eprintln!("whirlpoolsum: {}", e);
+                1
+            }
         }
     } else {
         // Hash generation mode

@@ -84,8 +84,23 @@ fn parse_checksum_line(line: &str) -> Result<(&str, &str), ParseError> {
     Ok((hash_part, filename))
 }
 
+/// Extract all filenames from a checksum reader without verifying
+pub fn extract_filenames<R: BufRead>(reader: R) -> Vec<String> {
+    reader
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|line| {
+            parse_checksum_line(&line)
+                .ok()
+                .map(|(_, filename)| filename.to_string())
+        })
+        .collect()
+}
+
 /// Verify checksums from a checksum file
-pub fn check_checksums(
+/// Verify checksums from a provided reader
+pub fn check_checksums<R: BufRead>(
+    reader: R,
     checksum_source: &str,
     config: &config::Config,
     status_only: bool,
@@ -93,17 +108,7 @@ pub fn check_checksums(
     quiet: bool,
 ) -> io::Result<(i32, Vec<HashResult>)> {
     let file_counter = AtomicUsize::new(0);
-    let checksum_path = Path::new(checksum_source);
-
-    // Open checksum file or use stdin
-    let reader: Box<dyn BufRead> = if checksum_source == "-" {
-        Box::new(BufReader::with_capacity(config::BUFFER_SIZE, io::stdin()))
-    } else {
-        let canonical_checksum_path = util::safe_canonicalize(checksum_path)?;
-        let checksum_file =
-            util::secure_open_file(&canonical_checksum_path, config, &file_counter, None)?;
-        Box::new(BufReader::with_capacity(config::BUFFER_SIZE, checksum_file))
-    };
+    // Removed internal file opening logic, now using provided reader
 
     // Counters for statistics
     let mut failed = 0;
