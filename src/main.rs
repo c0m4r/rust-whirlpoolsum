@@ -57,6 +57,15 @@ fn main() {
 
     let cli = cli::Cli::parse();
 
+    // Check if no input is provided and stdin is a terminal
+    // This prevents the program from hanging when run without arguments
+    use std::io::IsTerminal;
+    if cli.files.is_empty() && !cli.check && !cli.tui && std::io::stdin().is_terminal() {
+        eprintln!("No input files or data provided.");
+        eprintln!("Try 'whirlpoolsum --help' for more information.");
+        process::exit(1);
+    }
+
     // Check for network test mode (for AppArmor verification)
     if cli.test_network {
         use std::net::TcpStream;
