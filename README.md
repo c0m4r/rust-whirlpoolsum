@@ -9,18 +9,16 @@ Rust version of the whirlpoolsum that prints and checks WHIRLPOOL 512-bit checks
 
 Vibe-coded with Qwen3 (Max+Coder) / Claude Sonnet 4.5 (Thinking+Extended) / Gemini 3 Pro (High)
 
-Crates used: [whirlpool](https://crates.io/crates/whirlpool) | [colored](https://crates.io/crates/colored) | [rayon](https://crates.io/crates/rayon) | [clap](https://crates.io/crates/clap)
-
 </div>
 
 ## Quick install (x86_64/glibc)
 
 ```bash
-wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.8.0/whirlpoolsum
-echo "10716a9af4936e9159d26791e33c5a248bb8be6bd2ff6a76ccd2d710dcecc412  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
+wget https://github.com/c0m4r/rust-whirlpoolsum/releases/download/0.9.0/whirlpoolsum
+echo "808966f62c055310d945078fcf00310061df15e693ae82b396317ce5684cba28  whirlpoolsum" | sha256sum -c || rm -f whirlpoolsum
 sudo mv whirlpoolsum /usr/local/bin/
 sudo chmod +x /usr/local/bin/whirlpoolsum
-echo "03cd01ee98582bc1b5c58295a0f520e3c202e8dd53577e2cba5daf34194d5cd8d74d40b7d921bd9b2dac200e0efc8acf0ae1b0438c4b7956b39832cc87acde64  /usr/local/bin/whirlpoolsum" | whirlpoolsum -c
+echo "63323b7d9ee73dad2db3d8c6c6d6d2a4ad0d46eaa080f1e788a245ab74329def6c465f202832a93f2a65f820aa11209b79544c65132e574ba7be7d4b0f7838fe  /usr/local/bin/whirlpoolsum" | whirlpoolsum -c
 whirlpoolsum -V
 ```
 
@@ -28,13 +26,25 @@ On Alpine install [gcompat](https://git.adelielinux.org/adelie/gcompat) with `ap
 
 ## Other platforms (ARM64, RISC-V, Windows x64)
 
-Get the latest binaries at https://github.com/c0m4r/rust-whirlpoolsum/releases/tag/0.8.0
+Get the latest binaries at https://github.com/c0m4r/rust-whirlpoolsum/releases/tag/0.9.0
 
 ## Build from source
 
 1. [Install Rust](https://rust-lang.org/tools/install/)
 2. Run `cargo build --release` or use `./build.sh` for extended testing
 3. You'll find the binary executable in ./target/release/whirlpoolsum
+
+### Cross-compile
+
+```bash
+cargo install cross --git https://github.com/cross-rs/cross
+rustc --print=target-list # find target and consult it with the one on cross-rs page
+rustup target add aarch64-unknown-linux-gnu
+rustup target add riscv64gc-unknown-linux-gnu
+rustup target add x86_64-pc-windows-gnu
+rustup target add x86_64-unknown-linux-musl
+./cross.sh || cross build --target aarch64-unknown-linux-gnu --release
+```
 
 ## Usage
 
@@ -86,6 +96,14 @@ Benchmark (system test with score)
 
 ```bash
 whirlpoolsum --benchmark
+```
+
+## TUI
+
+Text-based UI with basic functionality using [ratatui](https://ratatui.rs/)
+
+```bash
+whirlpoolsum --tui
 ```
 
 ## Configuration options

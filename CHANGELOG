@@ -8,3 +8,4 @@
 0.7.0 / 2025-11-19 - major refactoring, clippy fixes, format, code split, bash-completion, comments/docs, Gemini 3 Pro improvements
 0.7.1 / 2025-11-19 - max files and sizes defaults and fixes
 0.8.0 / 2025-11-19 - Gemini 3 Pro: code review, RPN implementation, unit tests, merged duplicates, minor fixes and improvements
+0.9.0 / 2025-11-21 - Gemini 3 Pro: TUI, security unit tests, Seccomp/BPF sandboxing, Landlock, AppArmor profile

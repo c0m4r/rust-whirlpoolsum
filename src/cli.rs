@@ -47,6 +47,14 @@ pub struct Cli {
     #[arg(long = "yaml", conflicts_with = "json", next_line_help = false)]
     pub yaml: bool,
 
+    /// Launch Terminal User Interface
+    #[arg(long = "tui", next_line_help = false)]
+    pub tui: bool,
+
+    /// Test network connection (for AppArmor verification)
+    #[arg(long = "test-network", hide = true)]
+    pub test_network: bool,
+
     /// Files to process
     #[arg(name = "FILE", next_line_help = false)]
     pub files: Vec<PathBuf>,

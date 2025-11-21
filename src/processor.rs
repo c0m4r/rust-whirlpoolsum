@@ -96,6 +96,23 @@ pub fn compute_whirlpool<R: Read>(
 // File Processing Functions
 // ============================================================================
 
+/// Process text input and compute its WHIRLPOOL hash
+pub fn process_text(data: &[u8]) -> HashResult {
+    let mut hasher = Whirlpool::new();
+    hasher.update(data);
+    let hash_result = hasher.finalize();
+
+    let mut hash_bytes = [0u8; config::HASH_SIZE];
+    hash_bytes.copy_from_slice(&hash_result);
+
+    HashResult {
+        filename: PathBuf::from("(text input)"),
+        hash: util::hash_to_hex(&hash_bytes),
+        status: None,
+        benchmark_info: None,
+    }
+}
+
 /// Process a single file and compute its WHIRLPOOL hash
 pub fn process_file(
     filename: &Path,
