@@ -1,6 +1,6 @@
 [package]
 name = "whirlpoolsum"
-version = "0.9.2"
+version = "0.9.3"
 edition = "2021"
 description = "Rust version of the whirlpoolsum that prints and checks WHIRLPOOL 512-bit checksums."
 authors = ["Qwen3-Max, Qwen3-Coder, Claude Sonnet 4.5, c0m4r, Gemini 3 Pro"]
@@ -19,6 +19,7 @@ crossterm = "0.29.0"
 tokio = { version = "1.42.0", features = ["rt-multi-thread", "sync", "time", "macros"] }
 chrono = "0.4.38"
 libc = "0.2.177"
+rand = "0.9.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = "0.4.4"

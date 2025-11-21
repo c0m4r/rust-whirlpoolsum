@@ -1,19 +1,20 @@
 use crate::config::Config;
 use crate::processor;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 use std::io;
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{interval, sleep, Duration};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Tab {
     Text,
     File,
     Benchmark,
+    Snake,
 }
 
 impl Tab {
@@ -21,15 +22,17 @@ impl Tab {
         match self {
             Tab::Text => Tab::File,
             Tab::File => Tab::Benchmark,
-            Tab::Benchmark => Tab::Text,
+            Tab::Benchmark => Tab::Snake,
+            Tab::Snake => Tab::Text,
         }
     }
 
     pub fn prev(&self) -> Self {
         match self {
-            Tab::Text => Tab::Benchmark,
+            Tab::Text => Tab::Snake,
             Tab::File => Tab::Text,
             Tab::Benchmark => Tab::File,
+            Tab::Snake => Tab::Benchmark,
         }
     }
 
@@ -38,6 +41,7 @@ impl Tab {
             Tab::Text => "Text",
             Tab::File => "File",
             Tab::Benchmark => "Benchmark",
+            Tab::Snake => "Snake",
         }
     }
 }
@@ -60,15 +64,141 @@ use chrono::{DateTime, Local};
 use ratatui::widgets::ListState;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Position {
+    pub x: i16,
+    pub y: i16,
+}
+
+pub struct SnakeGame {
+    pub snake: Vec<Position>,
+    pub direction: Direction,
+    pub food: Position,
+    pub score: u32,
+    pub game_over: bool,
+    pub started: bool,
+    pub width: i16,
+    pub height: i16,
+    pub food_emoji: String,
+}
+
+const FOOD_EMOJIS: &[&str] = &["🍔", "🥕", "🍟", "🍉", "🍎", "🍏", "🍑", "🥦", "🍕", "🍪"];
+
+impl SnakeGame {
+    pub fn new(width: i16, height: i16) -> Self {
+        let start_x = width / 2;
+        let start_y = height / 2;
+        Self {
+            snake: vec![Position { x: start_x, y: start_y }],
+            direction: Direction::Right,
+            food: Position { x: start_x + 5, y: start_y },
+            score: 0,
+            game_over: false,
+            started: false,
+            width,
+            height,
+            food_emoji: "🍎".to_string(),
+        }
+    }
+
+    pub fn reset(&mut self) {
+        let start_x = self.width / 2;
+        let start_y = self.height / 2;
+        self.snake = vec![Position { x: start_x, y: start_y }];
+        self.direction = Direction::Right;
+        self.food = Position { x: start_x + 5, y: start_y };
+        self.score = 0;
+        self.game_over = false;
+        self.started = false;
+        self.spawn_food(); // Reset food and emoji
+    }
+
+    pub fn move_snake(&mut self) {
+        if self.game_over || !self.started {
+            return;
+        }
+
+        let head = self.snake[0];
+        let new_head = match self.direction {
+            Direction::Up => Position { x: head.x, y: head.y - 1 },
+            Direction::Down => Position { x: head.x, y: head.y + 1 },
+            Direction::Left => Position { x: head.x - 1, y: head.y },
+            Direction::Right => Position { x: head.x + 1, y: head.y },
+        };
+
+        // Wall wrapping
+        let new_head = Position {
+            x: (new_head.x + self.width) % self.width,
+            y: (new_head.y + self.height) % self.height,
+        };
+
+        // Check self collision
+        if self.snake.contains(&new_head) {
+            self.game_over = true;
+            return;
+        }
+
+        self.snake.insert(0, new_head);
+
+        // Check food collision
+        if new_head == self.food {
+            self.score += 10;
+            self.spawn_food();
+        } else {
+            self.snake.pop();
+        }
+    }
+
+    fn spawn_food(&mut self) {
+        use rand::Rng;
+        let mut rng = rand::rng();
+        loop {
+            let food = Position {
+                x: rng.random_range(0..self.width),
+                y: rng.random_range(0..self.height),
+            };
+            if !self.snake.contains(&food) {
+                self.food = food;
+                self.food_emoji = FOOD_EMOJIS[rng.random_range(0..FOOD_EMOJIS.len())].to_string();
+                break;
+            }
+        }
+    }
+
+    pub fn set_direction(&mut self, new_direction: Direction) {
+        // Prevent reversing direction
+        let valid = match (self.direction, new_direction) {
+            (Direction::Up, Direction::Down) | (Direction::Down, Direction::Up) => false,
+            (Direction::Left, Direction::Right) | (Direction::Right, Direction::Left) => false,
+            _ => true,
+        };
+        if valid {
+            self.direction = new_direction;
+        }
+    }
+}
+
 pub struct App {
     pub current_tab: Tab,
-    pub input: String,
+    pub text_input: String,
+    pub file_input: String,
     pub input_mode: InputMode,
     pub messages: Vec<(DateTime<Local>, String)>,
     pub config: Config,
     pub processing_state: ProcessingState,
     pub spinner_frame: usize,
     pub benchmark_result: Option<BenchmarkResult>,
+    pub latest_text_checksum: Option<String>,
+    pub latest_file_checksum: Option<String>,
+    pub snake_game: SnakeGame,
     // File browser state
     pub current_dir: PathBuf,
     pub dir_entries: Vec<PathBuf>,
@@ -88,19 +218,40 @@ impl App {
         let current_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut app = App {
             current_tab: Tab::Text,
-            input: String::new(),
+            text_input: String::new(),
+            file_input: String::new(),
             input_mode: InputMode::Normal,
             messages: Vec::new(),
             config,
             processing_state: ProcessingState::Idle,
             spinner_frame: 0,
             benchmark_result: None,
+            latest_text_checksum: None,
+            latest_file_checksum: None,
+            snake_game: SnakeGame::new(30, 20),  // Width 30 * 2 chars = 60 chars wide
             current_dir,
             dir_entries: Vec::new(),
             dir_state: ListState::default(),
         };
         app.read_dir();
         app
+    }
+
+    // Helper methods to get/set input based on current tab
+    pub fn current_input(&self) -> &str {
+        match self.current_tab {
+            Tab::Text => &self.text_input,
+            Tab::File => &self.file_input,
+            _ => "",
+        }
+    }
+
+    pub fn current_input_mut(&mut self) -> &mut String {
+        match self.current_tab {
+            Tab::Text => &mut self.text_input,
+            Tab::File => &mut self.file_input,
+            _ => &mut self.text_input, // fallback, won't be used
+        }
     }
 
     pub fn read_dir(&mut self) {
@@ -198,10 +349,10 @@ impl App {
                 if path.is_dir() {
                     self.current_dir = path.clone();
                     self.read_dir();
-                    self.input.clear(); // Clear input when changing directory
+                    self.file_input.clear(); // Clear file input when changing directory
                 } else {
                     // Select file
-                    self.input = path.to_string_lossy().to_string();
+                    self.file_input = path.to_string_lossy().to_string();
                 }
             }
         }
@@ -211,7 +362,7 @@ impl App {
         if let Some(parent) = self.current_dir.parent() {
             self.current_dir = parent.to_path_buf();
             self.read_dir();
-            self.input.clear();
+            self.file_input.clear();
         }
     }
 
@@ -230,10 +381,39 @@ impl App {
         // Spawn spinner update task
         let spinner_tx = tx.clone();
         tokio::spawn(async move {
+            let mut interval = interval(Duration::from_millis(80));
             loop {
-                sleep(Duration::from_millis(80)).await;
+                interval.tick().await;
                 if spinner_tx.send(AppMessage::UpdateSpinner).await.is_err() {
                     break;
+                }
+            }
+        });
+
+        // Spawn snake game update task
+        let snake_tx = tx.clone();
+        tokio::spawn(async move {
+            let mut interval = interval(Duration::from_millis(100));
+            loop {
+                interval.tick().await;
+                if snake_tx.send(AppMessage::SnakeTick).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        // Spawn input handling task
+        let input_tx = tx.clone();
+        tokio::task::spawn_blocking(move || {
+            loop {
+                if let Ok(event) = event::read() {
+                    if let Event::Key(key) = event {
+                        if key.kind == KeyEventKind::Press {
+                            if input_tx.blocking_send(AppMessage::Input(key)).is_err() {
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -241,38 +421,46 @@ impl App {
         loop {
             terminal.draw(|f| super::ui::ui(f, self))?;
 
-            // Handle messages with timeout
-            tokio::select! {
-                Some(msg) = rx.recv() => {
-                    match msg {
-                        AppMessage::UpdateSpinner => {
-                            if self.processing_state == ProcessingState::Computing {
-                                self.update_spinner();
+            if let Some(msg) = rx.recv().await {
+                match msg {
+                    AppMessage::Input(key) => {
+                        self.handle_key_event(key.code, key.modifiers, tx.clone()).await;
+                    }
+                    AppMessage::UpdateSpinner => {
+                        if self.processing_state == ProcessingState::Computing {
+                            self.update_spinner();
+                        }
+                    }
+                    AppMessage::ComputationComplete(result) => {
+                        self.processing_state = ProcessingState::Complete;
+                        // Extract just the hash from "Hash:  <hash>" format and store in appropriate field
+                        if let Some(hash) = result.strip_prefix("Hash:  ") {
+                            match self.current_tab {
+                                Tab::Text => self.latest_text_checksum = Some(hash.to_string()),
+                                Tab::File => self.latest_file_checksum = Some(hash.to_string()),
+                                _ => {}
                             }
                         }
-                        AppMessage::ComputationComplete(result) => {
-                            self.processing_state = ProcessingState::Complete;
-                            self.messages.push((Local::now(), result));
-                        }
-                        AppMessage::ComputationError(err) => {
-                            self.processing_state = ProcessingState::Error(err.clone());
-                            self.messages.push((Local::now(), format!("Error: {}", err)));
-                        }
-                        AppMessage::BenchmarkComplete(result) => {
-                            self.processing_state = ProcessingState::Complete;
-                            self.benchmark_result = Some(result);
+                        // Log to stderr for saving (TUI uses stdout)
+                        eprintln!("{}", result);
+                        self.messages.push((Local::now(), result));
+                    }
+                    AppMessage::ComputationError(err) => {
+                        self.processing_state = ProcessingState::Error(err.clone());
+                        let error_msg = format!("Error: {}", err);
+                        eprintln!("{}", error_msg);
+                        self.messages.push((Local::now(), error_msg));
+                    }
+                    AppMessage::BenchmarkComplete(result) => {
+                        self.processing_state = ProcessingState::Complete;
+                        self.benchmark_result = Some(result);
+                    }
+                    AppMessage::SnakeTick => {
+                        if self.current_tab == Tab::Snake {
+                            self.snake_game.move_snake();
                         }
                     }
                 }
-                _ = async {
-                    if event::poll(Duration::from_millis(50)).unwrap_or(false) {
-                        if let Ok(Event::Key(key)) = event::read() {
-                            if key.kind == KeyEventKind::Press {
-                                self.handle_key_event(key.code, key.modifiers, tx.clone()).await;
-                            }
-                        }
-                    }
-                } => {}
             }
 
             if self.input_mode == InputMode::Normal
@@ -311,12 +499,30 @@ impl App {
                 KeyCode::Right => {
                     if self.current_tab == Tab::File {
                         self.enter_dir();
+                    } else if self.current_tab == Tab::Snake {
+                        self.snake_game.set_direction(Direction::Right);
                     }
                 }
                 KeyCode::Left => {
                     // If in File tab, Left goes to parent dir
                     if self.current_tab == Tab::File {
                         self.go_to_parent();
+                    } else if self.current_tab == Tab::Snake {
+                        self.snake_game.set_direction(Direction::Left);
+                    }
+                }
+                KeyCode::Up if self.current_tab == Tab::Snake => {
+                    self.snake_game.set_direction(Direction::Up);
+                }
+                KeyCode::Down if self.current_tab == Tab::Snake => {
+                    self.snake_game.set_direction(Direction::Down);
+                }
+                KeyCode::Char('r') if self.current_tab == Tab::Snake => {
+                    self.snake_game.reset();
+                }
+                KeyCode::Char('n') if self.current_tab == Tab::Snake => {
+                    if !self.snake_game.started && !self.snake_game.game_over {
+                        self.snake_game.started = true;
                     }
                 }
                 KeyCode::Char('b')
@@ -351,20 +557,20 @@ impl App {
                     self.go_to_parent();
                 }
                 KeyCode::Delete => {
-                    self.input.clear();
+                    self.current_input_mut().clear();
                 }
                 _ => {}
             },
             InputMode::Editing => match code {
                 KeyCode::Enter => {
-                    let input_text = self.input.clone(); // Keep input for history/display if needed
+                    let input_text = self.current_input().to_string(); // Get input from current tab
                     self.input_mode = InputMode::Normal;
 
                     if !input_text.is_empty() {
                         match self.current_tab {
                             Tab::Text => {
                                 self.process_text(input_text, tx);
-                                self.input.clear();
+                                // Don't clear input, keep it visible for reference
                             }
                             Tab::File => {
                                 self.process_file(input_text, tx);
@@ -375,10 +581,10 @@ impl App {
                     }
                 }
                 KeyCode::Char(c) => {
-                    self.input.push(c);
+                    self.current_input_mut().push(c);
                 }
                 KeyCode::Backspace => {
-                    self.input.pop();
+                    self.current_input_mut().pop();
                 }
                 KeyCode::Esc => {
                     self.input_mode = InputMode::Normal;
@@ -504,4 +710,6 @@ pub enum AppMessage {
     ComputationComplete(String),
     ComputationError(String),
     BenchmarkComplete(BenchmarkResult),
+    SnakeTick,
+    Input(KeyEvent),
 }
