@@ -7,7 +7,9 @@
 
 Rust version of the whirlpoolsum that prints and checks WHIRLPOOL 512-bit checksums.
 
-Vibe-coded with Qwen3 (Max+Coder) / Claude Sonnet 4.5 (Thinking+Extended) / Gemini 3 Pro (High)
+Vibe-coded with Qwen3 (Max+Coder) / Claude Sonnet 4.5 (Thinking+Extended) / Gemini 3 Pro (High).
+
+Integrates [Seccomp/BPF](https://en.wikipedia.org/wiki/Seccomp) sandboxing, [Landlock](https://landlock.io/) and [AppArmor](https://apparmor.net/) profile as a measure of protection against supply chain attacks.
 
 </div>
 
