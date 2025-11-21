@@ -11,23 +11,25 @@ use super::app::{App, InputMode, ProcessingState, Tab};
 pub fn ui(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(if app.current_tab == Tab::Benchmark || app.current_tab == Tab::Snake {
-            vec![
-                Constraint::Length(3), // Tabs
-                Constraint::Length(3), // Help message
-                Constraint::Min(5),    // Content area
-                Constraint::Length(1), // Status bar
-            ]
-        } else {
-            vec![
-                Constraint::Length(3), // Tabs
-                Constraint::Length(3), // Help message
-                Constraint::Length(3), // Input
-                Constraint::Length(3), // Latest Checksum
-                Constraint::Min(5),    // Content area
-                Constraint::Length(1), // Status bar
-            ]
-        })
+        .constraints(
+            if app.current_tab == Tab::Benchmark || app.current_tab == Tab::Snake {
+                vec![
+                    Constraint::Length(3), // Tabs
+                    Constraint::Length(3), // Help message
+                    Constraint::Min(5),    // Content area
+                    Constraint::Length(1), // Status bar
+                ]
+            } else {
+                vec![
+                    Constraint::Length(3), // Tabs
+                    Constraint::Length(3), // Help message
+                    Constraint::Length(3), // Input
+                    Constraint::Length(3), // Latest Checksum
+                    Constraint::Min(5),    // Content area
+                    Constraint::Length(1), // Status bar
+                ]
+            },
+        )
         .split(f.area());
 
     if app.current_tab == Tab::Benchmark || app.current_tab == Tab::Snake {
@@ -358,11 +360,9 @@ fn render_benchmark(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_snake(f: &mut Frame, app: &App, area: Rect) {
     use super::app::Position;
-    
+
     // Render outer block with default style
-    let outer_block = Block::default()
-        .borders(Borders::ALL)
-        .title("Snake Game");
+    let outer_block = Block::default().borders(Borders::ALL).title("Snake Game");
     f.render_widget(outer_block, area);
 
     let game = &app.snake_game;
@@ -377,22 +377,17 @@ fn render_snake(f: &mut Frame, app: &App, area: Rect) {
             width: area.width,
             height: 6,
         };
-        
-        lines.push(Line::from(vec![
-            Span::styled(
-                "GAME OVER!",
-                Style::default()
-                    .fg(Color::Red)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
+
+        lines.push(Line::from(vec![Span::styled(
+            "GAME OVER!",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        )]));
         lines.push(Line::from(""));
         lines.push(Line::from(format!("Final Score: {}", game.score)));
         lines.push(Line::from(""));
         lines.push(Line::from("Press 'r' to restart"));
-        
-        let paragraph = Paragraph::new(lines)
-            .alignment(ratatui::layout::Alignment::Center);
+
+        let paragraph = Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center);
         f.render_widget(paragraph, msg_area);
         return;
     } else if !game.started {
@@ -405,19 +400,16 @@ fn render_snake(f: &mut Frame, app: &App, area: Rect) {
             height: 6,
         };
 
-        lines.push(Line::from(vec![
-            Span::styled(
-                "Press 'n' to start the game",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
+        lines.push(Line::from(vec![Span::styled(
+            "Press 'n' to start the game",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )]));
         lines.push(Line::from(""));
         lines.push(Line::from("Use arrow keys to control the snake"));
-        
-        let paragraph = Paragraph::new(lines)
-            .alignment(ratatui::layout::Alignment::Center);
+
+        let paragraph = Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center);
         f.render_widget(paragraph, msg_area);
         return;
     }
@@ -445,7 +437,7 @@ fn render_snake(f: &mut Frame, app: &App, area: Rect) {
     // Height: 20 lines
     let board_width = (game.width * 2) as u16;
     let board_height = game.height as u16;
-    
+
     // Add 2 for borders
     let total_width = board_width + 2;
     let total_height = board_height + 2;
@@ -463,7 +455,7 @@ fn render_snake(f: &mut Frame, app: &App, area: Rect) {
     let paragraph = Paragraph::new(lines).block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Blue))
+            .border_style(Style::default().fg(Color::Blue)),
     );
     f.render_widget(paragraph, game_area);
 }
@@ -472,7 +464,9 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let status = if app.current_tab == Tab::Snake {
         Span::styled(
             format!("Score: {}", app.snake_game.score),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         match &app.processing_state {

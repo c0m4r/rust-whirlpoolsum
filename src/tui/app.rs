@@ -4,7 +4,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use ratatui::backend::Backend;
 use ratatui::Terminal;
 use std::io;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{interval, sleep, Duration};
@@ -97,9 +97,15 @@ impl SnakeGame {
         let start_x = width / 2;
         let start_y = height / 2;
         Self {
-            snake: vec![Position { x: start_x, y: start_y }],
+            snake: vec![Position {
+                x: start_x,
+                y: start_y,
+            }],
             direction: Direction::Right,
-            food: Position { x: start_x + 5, y: start_y },
+            food: Position {
+                x: start_x + 5,
+                y: start_y,
+            },
             score: 0,
             game_over: false,
             started: false,
@@ -112,9 +118,15 @@ impl SnakeGame {
     pub fn reset(&mut self) {
         let start_x = self.width / 2;
         let start_y = self.height / 2;
-        self.snake = vec![Position { x: start_x, y: start_y }];
+        self.snake = vec![Position {
+            x: start_x,
+            y: start_y,
+        }];
         self.direction = Direction::Right;
-        self.food = Position { x: start_x + 5, y: start_y };
+        self.food = Position {
+            x: start_x + 5,
+            y: start_y,
+        };
         self.score = 0;
         self.game_over = false;
         self.started = false;
@@ -128,10 +140,22 @@ impl SnakeGame {
 
         let head = self.snake[0];
         let new_head = match self.direction {
-            Direction::Up => Position { x: head.x, y: head.y - 1 },
-            Direction::Down => Position { x: head.x, y: head.y + 1 },
-            Direction::Left => Position { x: head.x - 1, y: head.y },
-            Direction::Right => Position { x: head.x + 1, y: head.y },
+            Direction::Up => Position {
+                x: head.x,
+                y: head.y - 1,
+            },
+            Direction::Down => Position {
+                x: head.x,
+                y: head.y + 1,
+            },
+            Direction::Left => Position {
+                x: head.x - 1,
+                y: head.y,
+            },
+            Direction::Right => Position {
+                x: head.x + 1,
+                y: head.y,
+            },
         };
 
         // Wall wrapping
@@ -175,11 +199,14 @@ impl SnakeGame {
 
     pub fn set_direction(&mut self, new_direction: Direction) {
         // Prevent reversing direction
-        let valid = match (self.direction, new_direction) {
-            (Direction::Up, Direction::Down) | (Direction::Down, Direction::Up) => false,
-            (Direction::Left, Direction::Right) | (Direction::Right, Direction::Left) => false,
-            _ => true,
-        };
+        let valid = !matches!(
+            (self.direction, new_direction),
+            (Direction::Up, Direction::Down)
+                | (Direction::Down, Direction::Up)
+                | (Direction::Left, Direction::Right)
+                | (Direction::Right, Direction::Left)
+        );
+
         if valid {
             self.direction = new_direction;
         }
@@ -228,7 +255,7 @@ impl App {
             benchmark_result: None,
             latest_text_checksum: None,
             latest_file_checksum: None,
-            snake_game: SnakeGame::new(30, 20),  // Width 30 * 2 chars = 60 chars wide
+            snake_game: SnakeGame::new(30, 20), // Width 30 * 2 chars = 60 chars wide
             current_dir,
             dir_entries: Vec::new(),
             dir_state: ListState::default(),
@@ -402,16 +429,26 @@ impl App {
             }
         });
 
+        // Shared flag to signal input thread to stop
+        let running = Arc::new(AtomicBool::new(true));
+        let input_running = running.clone();
+
         // Spawn input handling task
         let input_tx = tx.clone();
         tokio::task::spawn_blocking(move || {
             loop {
-                if let Ok(event) = event::read() {
-                    if let Event::Key(key) = event {
-                        if key.kind == KeyEventKind::Press {
-                            if input_tx.blocking_send(AppMessage::Input(key)).is_err() {
-                                break;
-                            }
+                // Check if we should stop
+                if !input_running.load(Ordering::Relaxed) {
+                    break;
+                }
+
+                // Poll for events with a timeout to allow checking the flag
+                if event::poll(Duration::from_millis(100)).unwrap_or(false) {
+                    if let Ok(Event::Key(key)) = event::read() {
+                        if key.kind == KeyEventKind::Press
+                            && input_tx.blocking_send(AppMessage::Input(key)).is_err()
+                        {
+                            break;
                         }
                     }
                 }
@@ -424,7 +461,8 @@ impl App {
             if let Some(msg) = rx.recv().await {
                 match msg {
                     AppMessage::Input(key) => {
-                        self.handle_key_event(key.code, key.modifiers, tx.clone()).await;
+                        self.handle_key_event(key.code, key.modifiers, tx.clone())
+                            .await;
                     }
                     AppMessage::UpdateSpinner => {
                         if self.processing_state == ProcessingState::Computing {
@@ -470,6 +508,7 @@ impl App {
             }
         }
 
+        running.store(false, Ordering::Relaxed);
         Ok(())
     }
 
