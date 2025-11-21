@@ -3,7 +3,7 @@ _whirlpoolsum() {
     _init_completion -s || return
 
     # List of all options
-    local options="-c --check --status --warn -q --quiet --benchmark --max-file-size --max-files --json --yaml -h --help"
+    local options="-c --check --status --warn -q --quiet --benchmark --max-file-size --max-files --json --yaml --tui -h --help"
     
     # Options that require an argument
     local options_with_args="--max-file-size --max-files"
