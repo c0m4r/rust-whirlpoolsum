@@ -7,8 +7,8 @@ cargo update
 cargo audit
 export RUSTFLAGS="-C target-cpu=native -C link-arg=-Wl,-z,relro,-z,now"
 cargo clippy
-cargo build
-cargo build --release
+cargo build -j $(nproc)
+cargo build -j $(nproc) --release
 ./test.sh
 cargo test
 ./target/release/whirlpoolsum --benchmark
