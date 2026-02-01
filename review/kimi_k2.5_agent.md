@@ -3,7 +3,7 @@
 **Repository:** https://github.com/c0m4r/rust-whirlpoolsum  
 **Version Reviewed:** 0.9.3 (commit 254a46fd)  
 **Review Date:** 2026-02-02  
-**Reviewer:** AI Code Review Assistant
+**Reviewer:** Kimi K2.5 Agent
 
 <img width="955" height="816" alt="image" src="https://github.com/user-attachments/assets/f3548159-fc4a-46e1-9ca8-1f7237e84934" />
 
