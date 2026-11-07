@@ -12,3 +12,4 @@
 0.9.1 / 2025-11-21 - Gemini 3 Pro: fix landlock issues with check mode
 0.9.2 / 2025-11-21 - Gemini 3 Pro: fix broken pipe error, skip directories to avoid noisy outputs
 0.9.3 / 2025-11-21 - Gemini 3 Pro + Claude 4.5: TUI improvements + simple snake game
+0.9.4 / 2026-11-07 - Opus 5.5: cargo audit and deps update

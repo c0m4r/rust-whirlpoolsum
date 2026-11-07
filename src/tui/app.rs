@@ -402,7 +402,10 @@ impl App {
         SPINNER_CHARS[self.spinner_frame]
     }
 
-    pub async fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
+    pub async fn run<B: Backend<Error = io::Error>>(
+        &mut self,
+        terminal: &mut Terminal<B>,
+    ) -> io::Result<()> {
         let (tx, mut rx) = mpsc::channel::<AppMessage>(32);
 
         // Spawn spinner update task
